@@ -5,9 +5,14 @@
  */
 
 import { verifyKey, InteractionType, InteractionResponseType } from 'discord-interactions';
+import {
+  RegExpMatcher,
+  englishDataset,
+  englishRecommendedTransformers,
+} from 'obscenity';
 
 // ============================================
-// CONSTANTS
+// CONSTANTS & OBSCENITY INITIALIZATION
 // ============================================
 const WELCOME_CHANNEL_ID = '1477033060078850264';
 const LAXMI_WELCOMER_CHANNEL_ID = '1529028842188967977';
@@ -52,79 +57,20 @@ const DEFAULT_IGNORED_CHANNELS = [
   '1529028842188967977', // laxmi-welcomer
 ];
 
-// ============================================
-// OFFENSIVE WORD LIST
-// ============================================
-// Longer / unambiguous words — safe to substring-match anywhere in a message.
-const BANNED_WORDS = [
-  // English — direct + common misspells/obfuscation
-  'fuck', 'f**k', 'fck', 'fuk', 'fucc', 'fvck', 'phuck', 'fuq', 'fuking', 'fuked',
-  'focking', 'focked', 'motherfucker', 'motherfucking', 'frick', 'fricking', 'frickin',
-  'fudge', 'effing', 'effin', 'ffs',
-  'shit', 'sh1t', 'sht', 'shiit', 'shyt', 'shithead', 'shitty', 'horseshit',
-  'bitch', 'b1tch', 'btch', 'biatch',
-  'asshole', 'a**hole', 'a55hole', 'azzhole', 'asswipe',
-  'bastard', 'b@stard', 'bastad',
-  'dammit',
-  'dick', 'd1ck', 'dik', 'dickpic', 'dick pic',
-  'c0ck',
-  'pussy', 'puss1',
-  'nigga', 'nigger', 'n1gga', 'n1gger',
-  'r3tard',
-  'whore', 'wh0re',
-  'slut', 'sl*t', 'skank', 'skanky',
-  'kill yourself', 'k.y.s', 'end yourself',
-  'rape', 'r@pe',
-  'cunt', 'c*nt',
-  'prick', 'pr1ck',
-  'twat', 'tw@t',
-  'wanker', 'w@nker',
-  'bollocks', 'bullshit', 'bulls**t', 'bullcrap',
-  'jackass', 'dumbass', 'dumb@ss', 'dipshit',
-  'douchebag', 'douche',
-  'jerkoff', 'jerk off', 'blowjob', 'handjob', 'boner',
-  'nudes', 'send nudes', 'nsfw',
-  'shut up',
-  // Hindi / Hinglish — direct + common misspells
-  'madarchod', 'maderchod', 'maa ki', 'maaki', 'teri maa', 'teri ma', 'teri maa ki',
-  'behenchod', 'behen chod', 'behnchod', 'bahenchod', 'behen ke lode', 'bhen ke lode',
-  'chutiya', 'chutiye', 'choot', 'chutmarike',
-  'bhosdike', 'bhosd', 'bhosdi', 'bhosdiwale', 'bhosdiki',
-  'gandu', 'gaandu', 'g@ndu', 'gandmasti',
-  'harami', 'haraami', 'haraamzada',
-  'r@ndi', 'randibaaz',
-  'bsdk', 'lodu', 'lund', 'lauda', 'lavda', 'loda', 'lawde', 'lavde',
-  'chakka', 'hijra',
-  'kutte', 'kutta', 'kutiya', 'kutte ki aulad', 'suar ki aulad',
-  'kamina', 'kamine', 'kamini',
-  'ullu ka pattha',
-  'gadha', 'gadhe',
-  'bakwas', 'bakwaas',
-  'chup kar',
-  'nikl', 'nikal',
-  'jhant', 'jhaant', 'chinaal', 'nalayak', 'nikamma', 'nikammi', 'ghatiya', 'faltu',
-  // Advertising patterns
-  'discord.gg/', 'dsc.gg/', 'discordapp.com/invite',
-  'join my server', 'join our server', 'join my disc',
-  // Staff impersonation
-  'i am admin', 'i am mod', 'i am staff', "i'm admin", "i'm mod", "i'm staff",
-];
+// Initialize Obscenity Matcher once at worker startup
+const profanityMatcher = new RegExpMatcher({
+  ...englishDataset.build(),
+  ...englishRecommendedTransformers,
+});
 
-// Short / ambiguous words — require real word boundaries so they don't
-// misfire inside legit words (class, cockpit, Gandhi, parachute, etc.)
-const BOUNDARY_WORDS = [
-  'ass', 'cock', 'gand', 'chut', 'raand',
-  'kys', 'wtf', 'wth', 'stfu',
+// Hindi / Hinglish moderation pre-check (since English Obscenity target is English)
+const HINGLISH_BANNED = [
+  'madarchod', 'maderchod', 'maa ki', 'maaki', 'teri maa', 'behenchod', 'behen chod',
+  'behnchod', 'bahenchod', 'chutiya', 'chutiye', 'choot', 'chutmarike', 'bhosdike',
+  'bhosd', 'bhosdi', 'bhosdiwale', 'gandu', 'gaandu', 'harami', 'randi', 'bsdk',
+  'lodu', 'lund', 'lauda', 'lavda', 'loda', 'lawde', 'lavde', 'chakka', 'hijra',
+  'jhant', 'chinaal'
 ];
-
-// Words that are genuinely context-dependent — NOT hard-matched at all.
-// These are intentionally left for the Layer 2 AI check (below) to judge
-// in context, instead of auto-deleting on every occurrence:
-//   'mc'    → also short for Minecraft
-//   'bc'    → also short for "because"
-//   'tard'  → too many false positives (leotard, mustard, custard)
-//   'sala'/'saala'/'saale' → also a literal relation term (brother-in-law)
-//   'moron', 'idiot' → often used in harmless self-deprecating banter
 
 const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.com\/invite\/[a-zA-Z0-9]+/i;
 const recentMessages = new Map();
@@ -151,51 +97,27 @@ async function setIgnoredChannels(channels, env) {
   await env.LAXMI_KV.put('ignored_channels', JSON.stringify(channels));
 }
 
-function normalizeText(text) {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\u200b\u200c\u200d\u2060\ufeff]/g, '')
-    .replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e')
-    .replace(/4/g, 'a').replace(/5/g, 's').replace(/7/g, 't')
-    .replace(/9/g, 'g').replace(/\$/g, 's').replace(/@/g, 'a')
-    .replace(/\+/g, 't').replace(/8/g, 'b')
-    // collapse 3+ repeated letters to 1 → catches "fuuuuck", "shiiiit", "assss"
-    .replace(/([a-z])\1{2,}/g, '$1')
-    .replace(/\s+/g, ' ').trim();
-}
-
-// Strips every non-alphanumeric character. Used to catch spaced-out or
-// punctuated obfuscation like "f.u.c.k", "f_u_c_k", "f-u-c-k", "f u c k".
-function superStrip(text) {
-  return text.replace(/[^a-z0-9]/g, '');
-}
-
+// Layer 1 check using Obscenity + Hinglish array + Ad pattern
 function layer1Check(text) {
-  const normalized = normalizeText(text);
-  const stripped = superStrip(normalized);
+  // 1. English Profanity check via Obscenity
+  const matches = profanityMatcher.match(text);
+  if (matches.length > 0) {
+    return { flagged: true, reason: 'Profanity detected', confidence: 'high' };
+  }
 
-  // Longer/unambiguous words — safe to match anywhere in the message.
-  for (const word of BANNED_WORDS) {
-    const nw = superStrip(normalizeText(word));
-    if (nw && stripped.includes(nw)) {
+  // 2. Hinglish pre-check
+  const cleanText = text.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+  for (const word of HINGLISH_BANNED) {
+    if (cleanText.includes(word)) {
       return { flagged: true, reason: `Banned word: "${word}"`, confidence: 'high' };
     }
   }
 
-  // Short/ambiguous words (ass, mc, bc, gand, chut...) — require a real word
-  // boundary so they don't fire inside "class", "Gandhi", "parachute", etc.
-  for (const word of BOUNDARY_WORDS) {
-    const re = new RegExp(`(^|[^a-z0-9])${word}([^a-z0-9]|$)`, 'i');
-    if (re.test(normalized)) {
-      return { flagged: true, reason: `Banned word: "${word}"`, confidence: 'high' };
-    }
-  }
-
+  // 3. Discord link advertising check
   if (AD_PATTERN.test(text)) {
     return { flagged: true, reason: 'Discord server advertising', confidence: 'high' };
   }
+
   return { flagged: false };
 }
 
@@ -214,9 +136,7 @@ function raidCheck(channelId, content, userId) {
 }
 
 async function layer2AICheck(text, env) {
-  // Retained all your original AstralyxPvP rules, context, and Hinglish guidance,
-  // but stripped out all references to <think> tags or reasoning steps.
-  const systemPrompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server. You are the PRIMARY filter — a lightweight regex pre-check runs before you and only catches exact plain-text matches, so assume obfuscated or borderline messages will reach you and it's your job to catch them.
+  const systemPrompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server. You are the PRIMARY filter — a lightweight pre-check runs before you and only catches exact plain-text matches, so assume obfuscated or borderline messages will reach you and it's your job to catch them.
 
 Use your own knowledge of what counts as profanity, slurs, hate speech, harassment, sexual/NSFW content, or abusive language in English and Hindi/Hinglish (common in Indian gaming communities) to judge each message. Also flag Discord server advertising (invite links, "join my server") and staff impersonation (claiming to be admin/mod/staff falsely).
 
@@ -253,10 +173,9 @@ profanity Gemma / Gemini
           systemInstruction: { parts: [{ text: systemPrompt }] },
           safetySettings,
           generationConfig: {
-            temperature: 0.0, // Prevents creative formatting/bulleted lists
+            temperature: 0.0,
             maxOutputTokens: 150,
             responseMimeType: 'application/json',
-            // Hard-enforces JSON structure at the API level for both Gemma & Gemini
             responseSchema: {
               type: 'OBJECT',
               properties: {
@@ -290,7 +209,6 @@ profanity Gemma / Gemini
       }
 
       try {
-        // Remove markdown wrappers or stray text outside JSON brackets if present
         let cleaned = raw.replace(/```json|```/g, '').trim();
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
@@ -359,7 +277,6 @@ async function sendDiscordMessage(channelId, payload, env) {
   });
 }
 
-// Opens (or fetches) a DM channel with a user, returns the DM channel ID.
 async function getDMChannelId(userId, env) {
   const res = await fetch('https://discord.com/api/v10/users/@me/channels', {
     method: 'POST',
@@ -370,14 +287,13 @@ async function getDMChannelId(userId, env) {
   return data.id;
 }
 
-// Sends a DM to a user. Wrapped so a failure (DMs closed) never throws.
 async function sendDM(userId, payload, env) {
   try {
     const dmChannelId = await getDMChannelId(userId, env);
     if (!dmChannelId) return;
     await sendDiscordMessage(dmChannelId, payload, env);
   } catch (e) {
-    // User likely has server DMs disabled — safe to ignore.
+    // User likely has server DMs disabled
   }
 }
 
@@ -394,16 +310,13 @@ async function handleMemberJoin(userId, username, env) {
     timestamp: new Date().toISOString()
   };
 
-  // ONE message in the public welcome channel — nothing else posted here.
   await sendDiscordMessage(LAXMI_WELCOMER_CHANNEL_ID, {
     content: `<@${userId}>`,
     embeds: [welcomeEmbed]
   }, env);
 
-  // DM a copy of the welcome message to the user directly.
   await sendDM(userId, { embeds: [welcomeEmbed] }, env);
 
-  // DM the role selector too, instead of posting it in the channel.
   await sendDM(userId, {
     embeds: [{
       title: '🔔 Get Notified — Pick Your Roles!',
@@ -461,14 +374,10 @@ async function handleWelcomeReactionOptions(env) {
 // ============================================
 async function handleRoleToggle(interaction, roleId, env) {
   const userId = interaction.member?.user?.id || interaction.user?.id;
-  // Buttons are now sent via DM, so interaction.guild_id won't be present there —
-  // fall back to the known server ID so role add/remove still targets the right guild.
   const guildId = interaction.guild_id || MAIN_GUILD_ID;
   const memberRoles = interaction.member?.roles || [];
   let hasRole = memberRoles.includes(roleId);
 
-  // In DMs we don't get member.roles from the interaction payload directly,
-  // so fetch current roles from the guild to know whether to add or remove.
   if (!interaction.guild_id) {
     try {
       const memberRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
@@ -486,14 +395,13 @@ async function handleRoleToggle(interaction, roleId, env) {
   });
 
   const role = NOTIFICATION_ROLES.find(r => r.roleId === roleId);
-  const action = hasRole ? 'removed' : 'added';
   return jsonResponse({
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
       content: hasRole
         ? `✅ Removed **${role?.label}** role!`
         : `✅ Added **${role?.label}** role! You'll now get notified.`,
-      flags: 64 // ephemeral
+      flags: 64
     }
   });
 }
@@ -580,7 +488,7 @@ async function handleMessage(payload, env) {
     await deleteMessage(channelId, messageId, env);
     const action = isWarnExempt ? 'Delete' : 'Delete + Warn';
     if (!isWarnExempt) await warnUser(channelId, userId, l1.reason, env);
-    await sendLog(env, { userId, username, channelId, action, reason: l1.reason, layer: 'Layer 1 (Regex)', confidence: l1.confidence, message: content });
+    await sendLog(env, { userId, username, channelId, action, reason: l1.reason, layer: 'Layer 1 (Obscenity)', confidence: l1.confidence, message: content });
     return;
   }
 
