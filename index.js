@@ -98,10 +98,10 @@ async function setIgnoredChannels(channels, env) {
 }
 
 // Layer 1 check using Obscenity + Hinglish array + Ad pattern
+// Layer 1 check using Obscenity + Hinglish array + Ad pattern
 function layer1Check(text) {
   // 1. English Profanity check via Obscenity
-  const matches = profanityMatcher.match(text);
-  if (matches.length > 0) {
+  if (profanityMatcher.hasMatch(text)) {
     return { flagged: true, reason: 'Profanity detected', confidence: 'high' };
   }
 
