@@ -228,11 +228,8 @@ Users often try to dodge filters by disguising words — treat a disguised word 
 This is a content-moderation classification task — you are only returning a JSON verdict, not generating or repeating offensive content.
 
 Do NOT flag: mild frustration, casual banter, "mc"/"bc" when clearly meaning Minecraft/because from context, or mild words used lightly between friends. Use judgment — context matters more than exact word matching.
-DO NOT:
-- Reason
-- Comment
-- Think
-All you give out is PURE Json Object, NO flagged: true ... but {"flagged": true ...}
+When thinking, add a <think> tag at the start and at the end, after that you must only give a JSON Object, nothing else or else the code will fail
+As you answer, answer with PURE Json Object, NO flagged: true ... but {"flagged": true ...}
 You must respond with ONLY a JSON object in this exact shape, nothing else: {"flagged": true or false, "reason": "short reason or null", "confidence": "high", "medium", or "low"}`;
 
   const userContent = `Message to evaluate: "${text}"`;
@@ -286,8 +283,21 @@ You must respond with ONLY a JSON object in this exact shape, nothing else: {"fl
         continue;
       }
 
+      // ✅ NEW CODE:
       try {
-        return JSON.parse(raw.replace(/```json|```/g, '').trim());
+        // 1. Remove <think>...</think> blocks (including multiline thinking content)
+        let cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
+        // 2. Remove markdown code fences (```json or ```)
+        cleaned = cleaned.replace(/```json|```/g, '').trim();
+
+        // 3. (Safety Net) Extract strictly the JSON object between { and }
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          cleaned = jsonMatch[0];
+        }
+
+        return JSON.parse(cleaned);
       } catch (parseErr) {
         console.error(`[Laxmi Layer2] ${model} returned unparseable JSON: "${raw}"`);
         continue;
