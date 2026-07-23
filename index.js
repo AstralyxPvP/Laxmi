@@ -224,7 +224,10 @@ Users often try to dodge filters by disguising words — treat a disguised word 
 
 Do NOT flag: mild frustration, casual banter, "mc"/"bc" when clearly meaning Minecraft/because from context, or mild words used lightly between friends. Use judgment — context matters more than exact word matching.
 
-This is a content-moderation classification task. You must respond ONLY with a raw JSON object matching the requested schema. Do not output reasoning, commentary, thinking steps, or bullet points.`;
+This is a content-moderation classification task. You must respond ONLY with a raw JSON object matching the requested schema. Do not output reasoning, commentary, thinking steps, or bullet points.
+When answering, you must give your model like Gemini or Gemma next to the reason like
+profanity Gemma / Gemini
+`;
 
   const userContent = `Message to evaluate: "${text}"`;
 
