@@ -75,6 +75,48 @@ const commands = [
         required: false
       }
     ]
+  },
+  {
+    name: 'ban',
+    description: 'Ban a user from the server [Staff only]',
+    options: [
+      {
+        name: 'user',
+        description: 'The user to ban',
+        type: 6, // USER
+        required: true
+      },
+      {
+        name: 'reason',
+        description: 'Reason for the ban',
+        type: 3, // STRING
+        required: false
+      },
+      {
+        name: 'delete_days',
+        description: 'Number of days of messages to delete (0 to 7, default: 0)',
+        type: 4, // INTEGER
+        required: false
+      }
+    ]
+  },
+  {
+    name: 'unban',
+    description: 'Unban a user by their User ID [Staff only]',
+    options: [
+      {
+        name: 'user_id',
+        description: 'The Discord User ID to unban',
+        type: 3, // STRING
+        required: true
+      },
+      {
+        name: 'reason',
+        description: 'Reason for unbanning',
+        type: 3, // STRING
+        required: false
+      }
+    ]
   }
 ];
 

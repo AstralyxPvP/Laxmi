@@ -225,11 +225,13 @@ async function warnUser(channelId, userId, reason, env) {
 }
 
 // Timeout/Mute via Discord REST API (Capped to max 28 days due to Discord API constraints)
+// Applies communication timeout AND adds the Muted role
 async function timeoutUser(guildId, userId, durationMs, reason, env) {
-  const maxTimeoutMs = 28 * 24 * 60 * 60 * 1000;
+  const maxTimeoutMs = 28 * 24 * 60 * 60 * 1000; // 28 days API limit
   const actualDuration = Math.min(durationMs, maxTimeoutMs);
   const until = new Date(Date.now() + actualDuration).toISOString();
 
+  // 1. Set Communication Timeout
   await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
     method: 'PATCH',
     headers: {
@@ -241,10 +243,57 @@ async function timeoutUser(guildId, userId, durationMs, reason, env) {
       reason: reason
     })
   });
+
+  // 2. Assign Muted Role
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Mute')
+    }
+  });
 }
 
+// Clears communication timeout AND removes the Muted role
+async function unmuteUser(guildId, userId, reason, env) {
+  // 1. Clear Timeout
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      communication_disabled_until: null,
+      reason: reason
+    })
+  });
+
+  // 2. Remove Muted Role
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Unmute')
+    }
+  });
+}
+
+// Duration string parser helper (e.g. "30m", "2h", "1d")
+function parseDurationString(str) {
+  if (!str) return 30 * 60 * 1000; // Default 30 mins
+  const match = str.trim().match(/^(\d+)\s*([mhd])$/i);
+  if (!match) return null;
+  const num = parseInt(match[1], 10);
+  const unit = match[2].toLowerCase();
+  if (unit === 'm') return num * 60 * 1000;
+  if (unit === 'h') return num * 60 * 60 * 1000;
+  if (unit === 'd') return num * 24 * 60 * 60 * 1000;
+  return null;
+}
 // Ban User via Discord REST API
-async function banUser(guildId, userId, reason, env) {
+// Ban User via Discord REST API
+async function banUser(guildId, userId, reason, env, deleteMessageSeconds = 0) {
   await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
     method: 'PUT',
     headers: {
@@ -252,9 +301,20 @@ async function banUser(guildId, userId, reason, env) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      delete_message_seconds: 0,
+      delete_message_seconds: deleteMessageSeconds,
       reason: reason
     })
+  });
+}
+
+// Unban User via Discord REST API
+async function unbanUser(guildId, userId, reason, env) {
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Manual /unban command')
+    }
   });
 }
 
@@ -512,72 +572,7 @@ async function handleMemberJoin(userId, username, env) {
   await sendDiscordMessage(LAXMI_WELCOMER_CHANNEL_ID, { content: `<@${userId}>`, embeds: [welcomeEmbed] }, env);
   await sendDM(userId, { embeds: [welcomeEmbed] }, env);
 }
-// Applies communication timeout AND adds the Muted role
-async function timeoutUser(guildId, userId, durationMs, reason, env) {
-  const maxTimeoutMs = 28 * 24 * 60 * 60 * 1000; // 28 days API limit
-  const actualDuration = Math.min(durationMs, maxTimeoutMs);
-  const until = new Date(Date.now() + actualDuration).toISOString();
 
-  // 1. Set Communication Timeout
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      communication_disabled_until: until,
-      reason: reason
-    })
-  });
-
-  // 2. Assign Muted Role
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Mute')
-    }
-  });
-}
-
-// Clears communication timeout AND removes the Muted role
-async function unmuteUser(guildId, userId, reason, env) {
-  // 1. Clear Timeout
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      communication_disabled_until: null,
-      reason: reason
-    })
-  });
-
-  // 2. Remove Muted Role
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Unmute')
-    }
-  });
-}
-
-// Duration string parser helper (e.g. "30m", "2h", "1d")
-function parseDurationString(str) {
-  if (!str) return 30 * 60 * 1000; // Default 30 mins
-  const match = str.trim().match(/^(\d+)\s*([mhd])$/i);
-  if (!match) return null;
-  const num = parseInt(match[1], 10);
-  const unit = match[2].toLowerCase();
-  if (unit === 'm') return num * 60 * 1000;
-  if (unit === 'h') return num * 60 * 60 * 1000;
-  if (unit === 'd') return num * 24 * 60 * 60 * 1000;
-  return null;
-}
 async function handleWelcomeReactionOptions(env) {
   await sendDiscordMessage(WELCOME_CHANNEL_ID, {
     embeds: [{
@@ -726,12 +721,68 @@ async function handleSlashCommand(interaction, env) {
     });
   }
 
+  if (commandName === 'ban') {
+    const options = interaction.data.options || [];
+    const targetUserId = options.find(o => o.name === 'user')?.value;
+    const reason = options.find(o => o.name === 'reason')?.value || 'Banned by staff command';
+    const deleteDays = options.find(o => o.name === 'delete_days')?.value || 0;
+    const deleteSeconds = Math.min(Math.max(deleteDays, 0), 7) * 24 * 60 * 60;
+
+    await banUser(guildId, targetUserId, reason, env, deleteSeconds);
+    await sendLog(env, {
+      userId: targetUserId,
+      username: `<@${targetUserId}>`,
+      channelId: interaction.channel_id,
+      action: 'Banned',
+      rule: 'Manual Mod Command',
+      reason: reason,
+      layer: 'Staff Command (/ban)',
+      confidence: 'high',
+      message: `Executed by <@${interaction.member?.user?.id}>`
+    });
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `🔨 <@${targetUserId}> has been banned from the server.\n**Reason:** ${reason}` }
+    });
+  }
+
+  if (commandName === 'unban') {
+    const options = interaction.data.options || [];
+    const targetUserId = options.find(o => o.name === 'user_id')?.value;
+    const reason = options.find(o => o.name === 'reason')?.value || 'Unbanned by staff command';
+
+    if (!targetUserId || !/^\d{17,20}$/.test(targetUserId.trim())) {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: '❌ Please provide a valid numerical Discord User ID.', flags: 64 }
+      });
+    }
+
+    await unbanUser(guildId, targetUserId.trim(), reason, env);
+    await sendLog(env, {
+      userId: targetUserId.trim(),
+      username: `<@${targetUserId.trim()}>`,
+      channelId: interaction.channel_id,
+      action: 'Unbanned',
+      rule: 'Manual Mod Command',
+      reason: reason,
+      layer: 'Staff Command (/unban)',
+      confidence: 'high',
+      message: `Executed by <@${interaction.member?.user?.id}>`
+    });
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `🔓 User \`${targetUserId}\` has been unbanned.\n**Reason:** ${reason}` }
+    });
+  }
+
   return jsonResponse({
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: { content: '❓ Unknown command.', flags: 64 }
   });
 }
-
 // ============================================
 // AUTOMOD MESSAGE PROCESSOR
 // ============================================
