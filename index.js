@@ -240,11 +240,12 @@ Message to evaluate: "${text}"
 
 Respond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}`;
 
-  // Gemma first — free tier gives ~30 RPM / 14,400 RPD, way more headroom
-  // than Gemini Flash-Lite (~15 RPM / 1,000 RPD) for scanning every message.
-  // Falls back to Gemini automatically if Gemma is rate-limited or errors out.
+  // Gemma 4 26B first — newer, natively supports structured JSON output
+  // (Gemma 3 doesn't as cleanly), and still free-tier. Falls back to Gemma 3,
+  // then Gemini, if the primary model is rate-limited or errors out.
   const modelChain = [
-    env.GEMMA_MODEL || 'gemma-3-27b-it',
+    env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
+    'gemma-3-27b-it',
     env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview',
   ];
 
@@ -259,16 +260,38 @@ Respond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "re
         })
       });
 
-      if (res.status === 429) continue; // rate-limited, try next model in the chain
+      if (res.status === 429) {
+        console.error(`[Laxmi Layer2] ${model} rate-limited (429), trying next model`);
+        continue;
+      }
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        console.error(`[Laxmi Layer2] ${model} returned ${res.status}: ${errBody}`);
+        continue;
+      }
 
       const data = await res.json();
-      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-      return JSON.parse(raw.replace(/```json|```/g, '').trim());
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!raw) {
+        console.error(`[Laxmi Layer2] ${model} returned no text. Full response: ${JSON.stringify(data)}`);
+        continue;
+      }
+
+      try {
+        return JSON.parse(raw.replace(/```json|```/g, '').trim());
+      } catch (parseErr) {
+        console.error(`[Laxmi Layer2] ${model} returned unparseable JSON: "${raw}"`);
+        continue;
+      }
     } catch (e) {
+      console.error(`[Laxmi Layer2] ${model} threw an error: ${e.message}`);
       continue; // try next model in the chain
     }
   }
 
+  console.error(`[Laxmi Layer2] All models failed or unavailable. Message NOT AI-checked: "${text.substring(0, 100)}"`);
   return { flagged: false };
 }
 
