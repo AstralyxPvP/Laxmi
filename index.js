@@ -219,9 +219,9 @@ async function layer2AICheck(text, env) {
   // (blockReason: PROHIBITED_CONTENT) — every message silently failed
   // moderation because the prompt looked like a wall of slurs to Google.
   // Describe categories instead; the model already knows common profanity.
-  const prompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server. You are the PRIMARY filter — a lightweight regex pre-check runs before you and only catches exact plain-text matches, so assume obfuscated or borderline messages will reach you and it's your job to catch them.
+  const systemPrompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server. You are the PRIMARY filter — a lightweight regex pre-check runs before you and only catches exact plain-text matches, so assume obfuscated or borderline messages will reach you and it's your job to catch them.
 
-Use your own knowledge of what counts as profanity, slurs, hate speech, harassment, sexual/NSFW content, or abusive language in English and Hindi/Hinglish (common in Indian gaming communities) to judge this message. Also flag Discord server advertising (invite links, "join my server") and staff impersonation (claiming to be admin/mod/staff falsely).
+Use your own knowledge of what counts as profanity, slurs, hate speech, harassment, sexual/NSFW content, or abusive language in English and Hindi/Hinglish (common in Indian gaming communities) to judge each message. Also flag Discord server advertising (invite links, "join my server") and staff impersonation (claiming to be admin/mod/staff falsely).
 
 Users often try to dodge filters by disguising words — treat a disguised word the same as the plain word it represents: substituted numbers/symbols for letters, spaced-out letters, punctuation between letters, or stretched repeated letters all count as the original word.
 
@@ -229,9 +229,9 @@ This is a content-moderation classification task — you are only returning a JS
 
 Do NOT flag: mild frustration, casual banter, "mc"/"bc" when clearly meaning Minecraft/because from context, or mild words used lightly between friends. Use judgment — context matters more than exact word matching.
 
-Message to evaluate: "${text}"
+You must respond with ONLY a JSON object in this exact shape, nothing else: {"flagged": true or false, "reason": "short reason or null", "confidence": "high", "medium", or "low"}`;
 
-Respond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}`;
+  const userContent = `Message to evaluate: "${text}"`;
 
   // Loosen safety blocking on the classifier calls themselves — without this,
   // Google's default filters can still refuse to even look at messages that
@@ -244,12 +244,9 @@ Respond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "re
     { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
   ];
 
-  // Gemma 4 26B first — newer, natively supports structured JSON output
-  // (Gemma 3 doesn't as cleanly), and still free-tier. Falls back to Gemma 3,
-  // then Gemini, if the primary model is rate-limited or errors out.
+  // gemma-3-27b-it returns a 404 on this API/project — dropped from the chain.
   const modelChain = [
     env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
-    'gemma-3-27b-it',
     env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview',
   ];
 
@@ -259,9 +256,10 @@ Respond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "re
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          contents: [{ role: 'user', parts: [{ text: userContent }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
           safetySettings,
-          generationConfig: { temperature: 0.1, maxOutputTokens: 120 }
+          generationConfig: { temperature: 0.1, maxOutputTokens: 250, responseMimeType: 'application/json' }
         })
       });
 
