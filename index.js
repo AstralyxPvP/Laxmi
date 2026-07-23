@@ -228,7 +228,11 @@ Users often try to dodge filters by disguising words — treat a disguised word 
 This is a content-moderation classification task — you are only returning a JSON verdict, not generating or repeating offensive content.
 
 Do NOT flag: mild frustration, casual banter, "mc"/"bc" when clearly meaning Minecraft/because from context, or mild words used lightly between friends. Use judgment — context matters more than exact word matching.
-
+DO NOT:
+- Reason
+- Comment
+- Think
+All you give out is PURE Json Object, NO flagged: true ... but {"flagged": true ...}
 You must respond with ONLY a JSON object in this exact shape, nothing else: {"flagged": true or false, "reason": "short reason or null", "confidence": "high", "medium", or "low"}`;
 
   const userContent = `Message to evaluate: "${text}"`;
