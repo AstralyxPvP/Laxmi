@@ -1,0 +1,14 @@
+name = "laxmi"
+main = "index.js"
+compatibility_date = "2026-06-01"
+
+kv_namespaces = [
+  { binding = "LAXMI_KV", id = "756eb1ebf2ad4bb785de39dda224f31d" }
+]
+
+[vars]
+GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
