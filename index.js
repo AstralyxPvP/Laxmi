@@ -214,30 +214,20 @@ function raidCheck(channelId, content, userId) {
 }
 
 async function layer2AICheck(text, env) {
-  // IMPORTANT: do NOT paste the raw banned-word list into this prompt.
-  // Doing that got the prompt itself blocked by Google's own safety filter
-  // (blockReason: PROHIBITED_CONTENT) — every message silently failed
-  // moderation because the prompt looked like a wall of slurs to Google.
-  // Describe categories instead; the model already knows common profanity.
+  // Retained all your original AstralyxPvP rules, context, and Hinglish guidance,
+  // but stripped out all references to <think> tags or reasoning steps.
   const systemPrompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server. You are the PRIMARY filter — a lightweight regex pre-check runs before you and only catches exact plain-text matches, so assume obfuscated or borderline messages will reach you and it's your job to catch them.
 
 Use your own knowledge of what counts as profanity, slurs, hate speech, harassment, sexual/NSFW content, or abusive language in English and Hindi/Hinglish (common in Indian gaming communities) to judge each message. Also flag Discord server advertising (invite links, "join my server") and staff impersonation (claiming to be admin/mod/staff falsely).
 
 Users often try to dodge filters by disguising words — treat a disguised word the same as the plain word it represents: substituted numbers/symbols for letters, spaced-out letters, punctuation between letters, or stretched repeated letters all count as the original word.
 
-This is a content-moderation classification task — you are only returning a JSON verdict, not generating or repeating offensive content.
-
 Do NOT flag: mild frustration, casual banter, "mc"/"bc" when clearly meaning Minecraft/because from context, or mild words used lightly between friends. Use judgment — context matters more than exact word matching.
-When thinking, add a <think> tag at the start and at the end, after that you must only give a JSON Object, nothing else or else the code will fail
-As you answer, answer with PURE Json Object, NO flagged: true ... but {"flagged": true ...}
-You must respond with ONLY a JSON object in this exact shape, nothing else: {"flagged": true or false, "reason": "short reason or null", "confidence": "high", "medium", or "low"}`;
+
+This is a content-moderation classification task. You must respond ONLY with a raw JSON object matching the requested schema. Do not output reasoning, commentary, thinking steps, or bullet points.`;
 
   const userContent = `Message to evaluate: "${text}"`;
 
-  // Loosen safety blocking on the classifier calls themselves — without this,
-  // Google's default filters can still refuse to even look at messages that
-  // contain profanity/harassment content, which is exactly what we need to
-  // classify. BLOCK_ONLY_HIGH still blocks truly extreme content.
   const safetySettings = [
     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
     { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
@@ -245,7 +235,6 @@ You must respond with ONLY a JSON object in this exact shape, nothing else: {"fl
     { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
   ];
 
-  // gemma-3-27b-it returns a 404 on this API/project — dropped from the chain.
   const modelChain = [
     env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
     env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview',
@@ -260,7 +249,21 @@ You must respond with ONLY a JSON object in this exact shape, nothing else: {"fl
           contents: [{ role: 'user', parts: [{ text: userContent }] }],
           systemInstruction: { parts: [{ text: systemPrompt }] },
           safetySettings,
-          generationConfig: { temperature: 0.1, maxOutputTokens: 250, responseMimeType: 'application/json' }
+          generationConfig: {
+            temperature: 0.0, // Prevents creative formatting/bulleted lists
+            maxOutputTokens: 150,
+            responseMimeType: 'application/json',
+            // Hard-enforces JSON structure at the API level for both Gemma & Gemini
+            responseSchema: {
+              type: 'OBJECT',
+              properties: {
+                flagged: { type: 'BOOLEAN' },
+                reason: { type: 'STRING', nullable: true },
+                confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] }
+              },
+              required: ['flagged', 'reason', 'confidence']
+            }
+          }
         })
       });
 
@@ -283,15 +286,9 @@ You must respond with ONLY a JSON object in this exact shape, nothing else: {"fl
         continue;
       }
 
-      // ✅ NEW CODE:
       try {
-        // 1. Remove <think>...</think> blocks (including multiline thinking content)
-        let cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, '');
-
-        // 2. Remove markdown code fences (```json or ```)
-        cleaned = cleaned.replace(/```json|```/g, '').trim();
-
-        // 3. (Safety Net) Extract strictly the JSON object between { and }
+        // Remove markdown wrappers or stray text outside JSON brackets if present
+        let cleaned = raw.replace(/```json|```/g, '').trim();
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           cleaned = jsonMatch[0];
@@ -304,7 +301,7 @@ You must respond with ONLY a JSON object in this exact shape, nothing else: {"fl
       }
     } catch (e) {
       console.error(`[Laxmi Layer2] ${model} threw an error: ${e.message}`);
-      continue; // try next model in the chain
+      continue;
     }
   }
 
