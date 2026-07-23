@@ -223,8 +223,8 @@ DO NOT FLAG:
 
 Message to evaluate: "${text}"
 
-Respond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}`;
-
+Respond ONLY with JSON (no markdown, no extra text, no comments): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}
+`;
   const modelChain = [
     env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
     'gemma-3-27b-it',
