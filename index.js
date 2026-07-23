@@ -55,59 +55,76 @@ const DEFAULT_IGNORED_CHANNELS = [
 // ============================================
 // OFFENSIVE WORD LIST
 // ============================================
+// Longer / unambiguous words — safe to substring-match anywhere in a message.
 const BANNED_WORDS = [
-  // English — direct
-  'fuck', 'f**k', 'fck', 'fuk', 'fucc', 'fvck', 'frick', 'fricking', 'frickin',
-  'fudge', 'effing', 'effin',
-  'shit', 'sh1t', 'sht', 'shiit', 'shyt',
+  // English — direct + common misspells/obfuscation
+  'fuck', 'f**k', 'fck', 'fuk', 'fucc', 'fvck', 'phuck', 'fuq', 'fuking', 'fuked',
+  'focking', 'focked', 'motherfucker', 'motherfucking', 'frick', 'fricking', 'frickin',
+  'fudge', 'effing', 'effin', 'ffs',
+  'shit', 'sh1t', 'sht', 'shiit', 'shyt', 'shithead', 'shitty', 'horseshit',
   'bitch', 'b1tch', 'btch', 'biatch',
-  'asshole', 'a**hole', 'a55hole', 'azzhole',
+  'asshole', 'a**hole', 'a55hole', 'azzhole', 'asswipe',
   'bastard', 'b@stard', 'bastad',
-  'damn', 'dammit', 'damm',
-  'crap', 'crapping',
-  'dick', 'd1ck', 'dik',
-  'cock', 'c0ck',
+  'dammit',
+  'dick', 'd1ck', 'dik', 'dickpic', 'dick pic',
+  'c0ck',
   'pussy', 'puss1',
   'nigga', 'nigger', 'n1gga', 'n1gger',
-  'retard', 'r3tard', 'tard',
+  'r3tard',
   'whore', 'wh0re',
-  'slut', 'sl*t',
-  'kill yourself', 'kys', 'k.y.s', 'end yourself',
+  'slut', 'sl*t', 'skank', 'skanky',
+  'kill yourself', 'k.y.s', 'end yourself',
   'rape', 'r@pe',
   'cunt', 'c*nt',
   'prick', 'pr1ck',
   'twat', 'tw@t',
   'wanker', 'w@nker',
-  'bollocks', 'bullshit', 'bulls**t',
-  'jackass', 'dumbass', 'dumb@ss',
-  'moron', 'idiot',
-  'shut up', 'stfu',
-  'wtf', 'wth',
-  // Hindi / Hinglish
-  'madarchod', 'mc', 'maderchod', 'maa ki', 'maaki',
-  'behenchod', 'bc', 'behen chod', 'behnchod',
-  'chutiya', 'chutiye', 'chut', 'choot',
-  'bhosdike', 'bhosd', 'bhosdi', 'bhosdiwale',
-  'gandu', 'gaandu', 'g@ndu', 'gand',
+  'bollocks', 'bullshit', 'bulls**t', 'bullcrap',
+  'jackass', 'dumbass', 'dumb@ss', 'dipshit',
+  'douchebag', 'douche',
+  'jerkoff', 'jerk off', 'blowjob', 'handjob', 'boner',
+  'nudes', 'send nudes', 'nsfw',
+  'shut up',
+  // Hindi / Hinglish — direct + common misspells
+  'madarchod', 'maderchod', 'maa ki', 'maaki', 'teri maa', 'teri ma', 'teri maa ki',
+  'behenchod', 'behen chod', 'behnchod', 'bahenchod', 'behen ke lode', 'bhen ke lode',
+  'chutiya', 'chutiye', 'choot', 'chutmarike',
+  'bhosdike', 'bhosd', 'bhosdi', 'bhosdiwale', 'bhosdiki',
+  'gandu', 'gaandu', 'g@ndu', 'gandmasti',
   'harami', 'haraami', 'haraamzada',
-  'randi', 'r@ndi', 'raand',
-  'saala', 'sala', 'saale',
-  'teri maa', 'teri ma', 'teri maa ki',
-  'bsdk', 'lodu', 'lund', 'lauda', 'lavda',
+  'r@ndi', 'randibaaz',
+  'bsdk', 'lodu', 'lund', 'lauda', 'lavda', 'loda', 'lawde', 'lavde',
   'chakka', 'hijra',
-  'kutte', 'kutta', 'kutiya',
+  'kutte', 'kutta', 'kutiya', 'kutte ki aulad', 'suar ki aulad',
   'kamina', 'kamine', 'kamini',
-  'ullu', 'ullu ka pattha',
+  'ullu ka pattha',
   'gadha', 'gadhe',
   'bakwas', 'bakwaas',
-  'chup', 'chup kar',
+  'chup kar',
   'nikl', 'nikal',
+  'jhant', 'jhaant', 'chinaal', 'nalayak', 'nikamma', 'nikammi', 'ghatiya', 'faltu',
   // Advertising patterns
   'discord.gg/', 'dsc.gg/', 'discordapp.com/invite',
   'join my server', 'join our server', 'join my disc',
   // Staff impersonation
   'i am admin', 'i am mod', 'i am staff', "i'm admin", "i'm mod", "i'm staff",
 ];
+
+// Short / ambiguous words — require real word boundaries so they don't
+// misfire inside legit words (class, cockpit, Gandhi, parachute, etc.)
+const BOUNDARY_WORDS = [
+  'ass', 'cock', 'gand', 'chut', 'raand',
+  'kys', 'wtf', 'wth', 'stfu',
+];
+
+// Words that are genuinely context-dependent — NOT hard-matched at all.
+// These are intentionally left for the Layer 2 AI check (below) to judge
+// in context, instead of auto-deleting on every occurrence:
+//   'mc'    → also short for Minecraft
+//   'bc'    → also short for "because"
+//   'tard'  → too many false positives (leotard, mustard, custard)
+//   'sala'/'saala'/'saale' → also a literal relation term (brother-in-law)
+//   'moron', 'idiot' → often used in harmless self-deprecating banter
 
 const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.com\/invite\/[a-zA-Z0-9]+/i;
 const recentMessages = new Map();
@@ -139,22 +156,43 @@ function normalizeText(text) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e')
-    .replace(/4/g, 'a').replace(/5/g, 's').replace(/\$/g, 's')
-    .replace(/@/g, 'a').replace(/\+/g, 't').replace(/8/g, 'b')
     .replace(/[\u200b\u200c\u200d\u2060\ufeff]/g, '')
+    .replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e')
+    .replace(/4/g, 'a').replace(/5/g, 's').replace(/7/g, 't')
+    .replace(/9/g, 'g').replace(/\$/g, 's').replace(/@/g, 'a')
+    .replace(/\+/g, 't').replace(/8/g, 'b')
+    // collapse 3+ repeated letters to 1 → catches "fuuuuck", "shiiiit", "assss"
+    .replace(/([a-z])\1{2,}/g, '$1')
     .replace(/\s+/g, ' ').trim();
+}
+
+// Strips every non-alphanumeric character. Used to catch spaced-out or
+// punctuated obfuscation like "f.u.c.k", "f_u_c_k", "f-u-c-k", "f u c k".
+function superStrip(text) {
+  return text.replace(/[^a-z0-9]/g, '');
 }
 
 function layer1Check(text) {
   const normalized = normalizeText(text);
-  const noSpaces = normalized.replace(/\s/g, '');
+  const stripped = superStrip(normalized);
+
+  // Longer/unambiguous words — safe to match anywhere in the message.
   for (const word of BANNED_WORDS) {
-    const nw = normalizeText(word).replace(/\s/g, '');
-    if (noSpaces.includes(nw) || normalized.includes(normalizeText(word))) {
+    const nw = superStrip(normalizeText(word));
+    if (nw && stripped.includes(nw)) {
       return { flagged: true, reason: `Banned word: "${word}"`, confidence: 'high' };
     }
   }
+
+  // Short/ambiguous words (ass, mc, bc, gand, chut...) — require a real word
+  // boundary so they don't fire inside "class", "Gandhi", "parachute", etc.
+  for (const word of BOUNDARY_WORDS) {
+    const re = new RegExp(`(^|[^a-z0-9])${word}([^a-z0-9]|$)`, 'i');
+    if (re.test(normalized)) {
+      return { flagged: true, reason: `Banned word: "${word}"`, confidence: 'high' };
+    }
+  }
+
   if (AD_PATTERN.test(text)) {
     return { flagged: true, reason: 'Discord server advertising', confidence: 'high' };
   }
@@ -176,20 +214,38 @@ function raidCheck(channelId, content, userId) {
 }
 
 async function layer2AICheck(text, env) {
-  try {
-    const model = env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: `You are a Discord moderation classifier for an Indian Minecraft PvP server.\n\nAnalyze this message for: hate speech, toxicity, advertising, staff impersonation, NSFW content.\n\nMessage: "${text}"\n\nRespond ONLY with JSON (no markdown): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}\n\nOnly flag genuine violations. Mild frustration and casual chat are NOT violations.` }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 100 }
-      })
-    });
-    const data = await res.json();
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    return JSON.parse(raw.replace(/```json|```/g, '').trim());
-  } catch (e) { return { flagged: false }; }
+  const prompt = `You are a Discord moderation classifier for an Indian Minecraft PvP server.\n\nAnalyze this message for: hate speech, toxicity, advertising, staff impersonation, NSFW/sexual content.\n\nMessage: "${text}"\n\nRespond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}\n\nOnly flag genuine violations. Mild frustration and casual chat are NOT violations.`;
+
+  // Gemma first — free tier gives ~30 RPM / 14,400 RPD, way more headroom
+  // than Gemini Flash-Lite (~15 RPM / 1,000 RPD) for scanning every message.
+  // Falls back to Gemini automatically if Gemma is rate-limited or errors out.
+  const modelChain = [
+    env.GEMMA_MODEL || 'gemma-3-27b-it',
+    env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview',
+  ];
+
+  for (const model of modelChain) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 100 }
+        })
+      });
+
+      if (res.status === 429) continue; // rate-limited, try next model in the chain
+
+      const data = await res.json();
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      return JSON.parse(raw.replace(/```json|```/g, '').trim());
+    } catch (e) {
+      continue; // try next model in the chain
+    }
+  }
+
+  return { flagged: false };
 }
 
 async function deleteMessage(channelId, messageId, env) {
@@ -239,19 +295,71 @@ async function sendDiscordMessage(channelId, payload, env) {
   });
 }
 
+// Opens (or fetches) a DM channel with a user, returns the DM channel ID.
+async function getDMChannelId(userId, env) {
+  const res = await fetch('https://discord.com/api/v10/users/@me/channels', {
+    method: 'POST',
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient_id: userId })
+  });
+  const data = await res.json();
+  return data.id;
+}
+
+// Sends a DM to a user. Wrapped so a failure (DMs closed) never throws.
+async function sendDM(userId, payload, env) {
+  try {
+    const dmChannelId = await getDMChannelId(userId, env);
+    if (!dmChannelId) return;
+    await sendDiscordMessage(dmChannelId, payload, env);
+  } catch (e) {
+    // User likely has server DMs disabled — safe to ignore.
+  }
+}
+
 // ============================================
 // WELCOME MESSAGE
 // ============================================
 async function handleMemberJoin(userId, username, env) {
+  const welcomeEmbed = {
+    title: '🙏 Welcome to AstralyxPvP!',
+    description: `Namaste <@${userId}>! Welcome to **AstralyxPvP** — India's premier Minecraft Java PvP server!\n\n⚔️ **Server IP:** \`java.astralyxpvp.int.yt\`\n🌐 **Website:** [astralyxpvp.pages.dev](https://astralyxpvp.pages.dev)\n\nHead over to <#1477033060078850264> to get started, check <#1477033071076442165> for the rules, and pick up your notification roles in your DMs!\n\nSee you on the battlefield! 🔥`,
+    color: 0xC8102E,
+    thumbnail: { url: 'https://astralyxpvp.pages.dev/Assets/logo.png' },
+    footer: { text: `Welcome, ${username}! • AstralyxPvP` },
+    timestamp: new Date().toISOString()
+  };
+
+  // ONE message in the public welcome channel — nothing else posted here.
   await sendDiscordMessage(LAXMI_WELCOMER_CHANNEL_ID, {
     content: `<@${userId}>`,
+    embeds: [welcomeEmbed]
+  }, env);
+
+  // DM a copy of the welcome message to the user directly.
+  await sendDM(userId, { embeds: [welcomeEmbed] }, env);
+
+  // DM the role selector too, instead of posting it in the channel.
+  await sendDM(userId, {
     embeds: [{
-      title: '🙏 Welcome to AstralyxPvP!',
-      description: `Namaste <@${userId}>! Welcome to **AstralyxPvP** — India's premier Minecraft Java PvP server!\n\n⚔️ **Server IP:** \`java.astralyxpvp.int.yt\`\n🌐 **Website:** [astralyxpvp.pages.dev](https://astralyxpvp.pages.dev)\n\nHead over to <#1477033060078850264> to get started, check <#1477033071076442165> for the rules, and pick up your notification roles below!\n\nSee you on the battlefield! 🔥`,
+      title: '🔔 Get Notified — Pick Your Roles!',
+      description: 'Stay updated with what matters to you! Click the buttons below to assign yourself notification roles.\n\nYou can click again to remove a role anytime.',
       color: 0xC8102E,
-      thumbnail: { url: 'https://astralyxpvp.pages.dev/Assets/logo.png' },
-      footer: { text: `Welcome, ${username}! • AstralyxPvP` },
-      timestamp: new Date().toISOString()
+      fields: NOTIFICATION_ROLES.map(r => ({
+        name: r.label,
+        value: `<@&${r.roleId}>`,
+        inline: true
+      })),
+      footer: { text: 'AstralyxPvP • Role Selector' }
+    }],
+    components: [{
+      type: 1,
+      components: NOTIFICATION_ROLES.map(r => ({
+        type: 2,
+        style: 2,
+        label: r.label,
+        custom_id: `role_toggle_${r.roleId}`
+      }))
     }]
   }, env);
 }
@@ -288,10 +396,24 @@ async function handleWelcomeReactionOptions(env) {
 // HANDLE ROLE BUTTON CLICK
 // ============================================
 async function handleRoleToggle(interaction, roleId, env) {
-  const userId = interaction.member.user.id;
-  const guildId = interaction.guild_id;
-  const memberRoles = interaction.member.roles || [];
-  const hasRole = memberRoles.includes(roleId);
+  const userId = interaction.member?.user?.id || interaction.user?.id;
+  // Buttons are now sent via DM, so interaction.guild_id won't be present there —
+  // fall back to the known server ID so role add/remove still targets the right guild.
+  const guildId = interaction.guild_id || MAIN_GUILD_ID;
+  const memberRoles = interaction.member?.roles || [];
+  let hasRole = memberRoles.includes(roleId);
+
+  // In DMs we don't get member.roles from the interaction payload directly,
+  // so fetch current roles from the guild to know whether to add or remove.
+  if (!interaction.guild_id) {
+    try {
+      const memberRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+        headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}` }
+      });
+      const memberData = await memberRes.json();
+      hasRole = (memberData.roles || []).includes(roleId);
+    } catch (e) {}
+  }
 
   const method = hasRole ? 'DELETE' : 'PUT';
   await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
