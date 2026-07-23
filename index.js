@@ -98,7 +98,7 @@ const RULE_OPTIONS = [
   'harassment',
   'none'
 ];
-
+const MUTED_ROLE_ID = '1529919178071343214';
 const PUNISHMENT_MATRIX = {
   flooding_chat: [
     { type: 'mute', duration: 30 * 60 * 1000, label: '30 minute mute' },
@@ -512,7 +512,72 @@ async function handleMemberJoin(userId, username, env) {
   await sendDiscordMessage(LAXMI_WELCOMER_CHANNEL_ID, { content: `<@${userId}>`, embeds: [welcomeEmbed] }, env);
   await sendDM(userId, { embeds: [welcomeEmbed] }, env);
 }
+// Applies communication timeout AND adds the Muted role
+async function timeoutUser(guildId, userId, durationMs, reason, env) {
+  const maxTimeoutMs = 28 * 24 * 60 * 60 * 1000; // 28 days API limit
+  const actualDuration = Math.min(durationMs, maxTimeoutMs);
+  const until = new Date(Date.now() + actualDuration).toISOString();
 
+  // 1. Set Communication Timeout
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      communication_disabled_until: until,
+      reason: reason
+    })
+  });
+
+  // 2. Assign Muted Role
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Mute')
+    }
+  });
+}
+
+// Clears communication timeout AND removes the Muted role
+async function unmuteUser(guildId, userId, reason, env) {
+  // 1. Clear Timeout
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      communication_disabled_until: null,
+      reason: reason
+    })
+  });
+
+  // 2. Remove Muted Role
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Unmute')
+    }
+  });
+}
+
+// Duration string parser helper (e.g. "30m", "2h", "1d")
+function parseDurationString(str) {
+  if (!str) return 30 * 60 * 1000; // Default 30 mins
+  const match = str.trim().match(/^(\d+)\s*([mhd])$/i);
+  if (!match) return null;
+  const num = parseInt(match[1], 10);
+  const unit = match[2].toLowerCase();
+  if (unit === 'm') return num * 60 * 1000;
+  if (unit === 'h') return num * 60 * 60 * 1000;
+  if (unit === 'd') return num * 24 * 60 * 60 * 1000;
+  return null;
+}
 async function handleWelcomeReactionOptions(env) {
   await sendDiscordMessage(WELCOME_CHANNEL_ID, {
     embeds: [{
@@ -565,6 +630,7 @@ async function handleSlashCommand(interaction, env) {
   const commandName = interaction.data.name;
   const memberRoles = interaction.member?.roles || [];
   const isStaff = memberRoles.some(r => MOD_ROLES.includes(r));
+  const guildId = interaction.guild_id || MAIN_GUILD_ID;
 
   if (!isStaff) {
     return jsonResponse({
@@ -600,6 +666,63 @@ async function handleSlashCommand(interaction, env) {
     return jsonResponse({
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
       data: { content: `✅ Removed <#${channelId}> from ignored channels.`, flags: 64 }
+    });
+  }
+
+  if (commandName === 'mute') {
+    const options = interaction.data.options || [];
+    const targetUserId = options.find(o => o.name === 'user')?.value;
+    const durationInput = options.find(o => o.name === 'duration')?.value || '30m';
+    const reason = options.find(o => o.name === 'reason')?.value || 'Muted by staff command';
+
+    const durationMs = parseDurationString(durationInput);
+    if (!durationMs) {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: '❌ Invalid duration format! Use formats like `30m`, `1h`, `6h`, or `1d`.', flags: 64 }
+      });
+    }
+
+    await timeoutUser(guildId, targetUserId, durationMs, reason, env);
+    await sendLog(env, {
+      userId: targetUserId,
+      username: `<@${targetUserId}>`,
+      channelId: interaction.channel_id,
+      action: `Muted (${durationInput}) + Muted Role Added`,
+      rule: 'Manual Mod Command',
+      reason: reason,
+      layer: 'Staff Command (/mute)',
+      confidence: 'high',
+      message: `Executed by <@${interaction.member?.user?.id}>`
+    });
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `🔇 <@${targetUserId}> has been muted for **${durationInput}** and given the <@&${MUTED_ROLE_ID}> role.\n**Reason:** ${reason}` }
+    });
+  }
+
+  if (commandName === 'unmute') {
+    const options = interaction.data.options || [];
+    const targetUserId = options.find(o => o.name === 'user')?.value;
+    const reason = options.find(o => o.name === 'reason')?.value || 'Unmuted by staff command';
+
+    await unmuteUser(guildId, targetUserId, reason, env);
+    await sendLog(env, {
+      userId: targetUserId,
+      username: `<@${targetUserId}>`,
+      channelId: interaction.channel_id,
+      action: 'Unmuted + Muted Role Removed',
+      rule: 'Manual Mod Command',
+      reason: reason,
+      layer: 'Staff Command (/unmute)',
+      confidence: 'high',
+      message: `Executed by <@${interaction.member?.user?.id}>`
+    });
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `🔊 <@${targetUserId}> has been unmuted and the <@&${MUTED_ROLE_ID}> role was removed.\n**Reason:** ${reason}` }
     });
   }
 

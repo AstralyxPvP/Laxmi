@@ -33,6 +33,48 @@ const commands = [
       type: 7, // CHANNEL
       required: true
     }]
+  },
+  {
+    name: 'mute',
+    description: 'Mute a user and assign the Muted role [Staff only]',
+    options: [
+      {
+        name: 'user',
+        description: 'The user to mute',
+        type: 6, // USER
+        required: true
+      },
+      {
+        name: 'duration',
+        description: 'Duration (e.g., 30m, 1h, 6h, 1d, 7d)',
+        type: 3, // STRING
+        required: false
+      },
+      {
+        name: 'reason',
+        description: 'Reason for the mute',
+        type: 3, // STRING
+        required: false
+      }
+    ]
+  },
+  {
+    name: 'unmute',
+    description: 'Unmute a user and remove the Muted role [Staff only]',
+    options: [
+      {
+        name: 'user',
+        description: 'The user to unmute',
+        type: 6, // USER
+        required: true
+      },
+      {
+        name: 'reason',
+        description: 'Reason for unmuting',
+        type: 3, // STRING
+        required: false
+      }
+    ]
   }
 ];
 
@@ -48,7 +90,7 @@ const res = await fetch(`https://discord.com/api/v10/applications/${APP_ID}/comm
 const data = await res.json();
 if (res.ok) {
   console.log(`✅ Registered ${data.length} commands successfully!`);
-  data.forEach(c => console.log(`  - /${c.name}`));
+  data.forEach(c => console.log(`   - /${c.name}`));
 } else {
   console.error('❌ Failed:', data);
 }
