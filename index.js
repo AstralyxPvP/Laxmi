@@ -214,7 +214,31 @@ function raidCheck(channelId, content, userId) {
 }
 
 async function layer2AICheck(text, env) {
-  const prompt = `You are a Discord moderation classifier for an Indian Minecraft PvP server.\n\nAnalyze this message for: hate speech, toxicity, advertising, staff impersonation, NSFW/sexual content.\n\nMessage: "${text}"\n\nRespond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}\n\nOnly flag genuine violations. Mild frustration and casual chat are NOT violations.`;
+  // Give the AI the actual word list as context — it needs to know which
+  // Hinglish/Hindi terms are considered offensive on this server (a generic
+  // model won't automatically know local slang), and it's far better than
+  // regex at recognizing obfuscated spellings like "f1ck", "@ss", "sh!t",
+  // spaced-out letters, or repeated-letter stretching.
+  const knownBadWords = [...BANNED_WORDS, ...BOUNDARY_WORDS].join(', ');
+
+  const prompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server. You are the PRIMARY filter — a lightweight regex pre-check runs before you and only catches exact plain-text matches, so assume obfuscated or borderline messages will reach you and it's your job to catch them.
+
+Reference list of words/phrases already considered violations on this server (English profanity, NSFW terms, Hindi/Hinglish abuse, advertising, and staff-impersonation phrases):
+${knownBadWords}
+
+RULES — flag a message if it contains ANY of the following, even when disguised:
+1. Any word from the reference list above, OR a clear variant of one — including leetspeak (numbers/symbols replacing letters: f1ck, @ss, sh1t, b!tch), spaced-out letters (f u c k), punctuation-separated letters (f.u.c.k, f_u_c_k), repeated-letter stretching (fuuuuck, shiiiit), or phonetic misspellings.
+2. Hate speech, slurs, or harassment targeting a person or group.
+3. Sexual or NSFW content, including requests for nudes/explicit content.
+4. Server/Discord advertising (invite links, "join my server", etc.) — unless posted by staff.
+5. Staff impersonation (claiming to be admin/mod/staff when not).
+6. Threats of violence or encouraging self-harm.
+
+Do NOT flag: mild frustration ("this is annoying", "ugh"), casual banter, words like "mc" or "bc" when clearly meaning Minecraft/because from context, or "sala"/"idiot"/"moron" used lightly between friends. Use judgment — context matters more than exact word matching.
+
+Message to evaluate: "${text}"
+
+Respond ONLY with JSON (no markdown, no extra text): {"flagged": true/false, "reason": "short reason or null", "confidence": "high/medium/low"}`;
 
   // Gemma first — free tier gives ~30 RPM / 14,400 RPD, way more headroom
   // than Gemini Flash-Lite (~15 RPM / 1,000 RPD) for scanning every message.
@@ -231,7 +255,7 @@ async function layer2AICheck(text, env) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 100 }
+          generationConfig: { temperature: 0.1, maxOutputTokens: 120 }
         })
       });
 
