@@ -1,6 +1,6 @@
 /**
  * Laxmi | AstralyxPvP Assistant
- * Smart Automod + Welcome Bot — Cloudflare Worker
+ * Smart Automod + Welcome Bot + Custom Native Moderation Engine
  * Built by IndianCoder3
  */
 
@@ -17,6 +17,7 @@ import {
 const WELCOME_CHANNEL_ID = '1477033060078850264';
 const LAXMI_WELCOMER_CHANNEL_ID = '1529028842188967977';
 const MAIN_GUILD_ID = '1477024790555672718';
+const MUTED_ROLE_ID = '1529919178071343214';
 
 const NOTIFICATION_ROLES = [
   { label: '📣 Announcements', roleId: '1483166577259188406' },
@@ -39,7 +40,6 @@ const MOD_ROLES = [
 ];
 
 const LINK_EXEMPT_ROLES = [...MOD_ROLES];
-const WARN_EXEMPT_ROLES = [...MOD_ROLES];
 
 const DEFAULT_IGNORED_CHANNELS = [
   '1477033205017346259', // announcements
@@ -73,32 +73,20 @@ const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.
 
 // In-memory trackers
 const recentMessages = new Map();
-const userSpamTracker = new Map(); // Tracks rapid consecutive messages per user
+const userSpamTracker = new Map();
 
 // ============================================
 // RULE & PUNISHMENT LADDER MATRIX
 // ============================================
 const RULE_OPTIONS = [
-  'swearing_at_players',
-  'discord_advertising',
-  'light_advertising',
-  'asking_staff_items',
-  'chat_trolling',
-  'flooding_chat',
-  'inappropriate_behavior',
-  'discrimination',
-  'referencing_tragic_events',
-  'discord_server_links',
-  'threatening_others',
-  'advertising_social_media',
-  'disease_disability_swearing',
-  'general_rudeness',
-  'doxxing',
-  'ddos_threats',
-  'harassment',
-  'none'
+  'swearing_at_players', 'discord_advertising', 'light_advertising',
+  'asking_staff_items', 'chat_trolling', 'flooding_chat',
+  'inappropriate_behavior', 'discrimination', 'referencing_tragic_events',
+  'discord_server_links', 'threatening_others', 'advertising_social_media',
+  'disease_disability_swearing', 'general_rudeness', 'doxxing',
+  'ddos_threats', 'harassment', 'none'
 ];
-const MUTED_ROLE_ID = '1529919178071343214';
+
 const PUNISHMENT_MATRIX = {
   flooding_chat: [
     { type: 'mute', duration: 30 * 60 * 1000, label: '30 minute mute' },
@@ -171,9 +159,9 @@ const PUNISHMENT_MATRIX = {
     { type: 'mute', duration: 6 * 60 * 60 * 1000, label: '6 hour mute' },
   ],
   doxxing: [
-    { type: 'ban', duration: null, label: 'Permanent ban + reported to local authorities' },
-    { type: 'ban', duration: null, label: 'Permanent ban + reported to local authorities' },
-    { type: 'ban', duration: null, label: 'Permanent ban + reported to local authorities' },
+    { type: 'ban', duration: null, label: 'Permanent ban + reported to authorities' },
+    { type: 'ban', duration: null, label: 'Permanent ban + reported to authorities' },
+    { type: 'ban', duration: null, label: 'Permanent ban + reported to authorities' },
   ],
   ddos_threats: [
     { type: 'ban', duration: null, label: 'Permanent IP ban' },
@@ -188,7 +176,44 @@ const PUNISHMENT_MATRIX = {
 };
 
 // ============================================
-// HELPERS & DISCORD MODERATION ACTIONS
+// INFRACTION STORAGE ENGINE (CLOUDFLARE KV)
+// ============================================
+async function logInfraction(userId, type, reason, moderator, env) {
+  const kvKey = `history:${userId}`;
+  let history = [];
+  try {
+    const raw = await env.LAXMI_KV.get(kvKey);
+    if (raw) history = JSON.parse(raw);
+  } catch (e) {}
+
+  const entry = {
+    id: history.length + 1,
+    type, // 'WARN', 'MUTE', 'UNMUTE', 'BAN', 'UNBAN'
+    reason,
+    moderator,
+    timestamp: new Date().toISOString()
+  };
+
+  history.push(entry);
+  await env.LAXMI_KV.put(kvKey, JSON.stringify(history));
+  return entry;
+}
+
+async function getInfractions(userId, env) {
+  try {
+    const raw = await env.LAXMI_KV.get(`history:${userId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function clearInfractions(userId, env) {
+  await env.LAXMI_KV.delete(`history:${userId}`);
+}
+
+// ============================================
+// HELPERS & DISCORD API ACTIONS
 // ============================================
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -216,72 +241,95 @@ async function deleteMessage(channelId, messageId, env) {
   });
 }
 
-async function warnUser(channelId, userId, reason, env) {
-  await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+async function sendDiscordMessage(channelId, payload, env) {
+  return fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: 'POST',
     headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: `?warn <@${userId}> ${reason}` })
+    body: JSON.stringify(payload)
   });
 }
 
-// Timeout/Mute via Discord REST API (Capped to max 28 days due to Discord API constraints)
-// Applies communication timeout AND adds the Muted role
-async function timeoutUser(guildId, userId, durationMs, reason, env) {
-  const maxTimeoutMs = 28 * 24 * 60 * 60 * 1000; // 28 days API limit
+// Custom Native Warning
+async function warnUser(channelId, userId, reason, moderator, env) {
+  const entry = await logInfraction(userId, 'WARN', reason, moderator, env);
+  const history = await getInfractions(userId, env);
+
+  await sendDiscordMessage(channelId, {
+    embeds: [{
+      title: '⚠️ Warning Issued',
+      description: `<@${userId}> has been warned by **${moderator}**.`,
+      color: 0xFEE75C,
+      fields: [
+        { name: 'Reason', value: reason, inline: false },
+        { name: 'Total Infractions', value: `${history.length}`, inline: true }
+      ],
+      footer: { text: 'Laxmi Custom Automod • AstralyxPvP' },
+      timestamp: new Date().toISOString()
+    }]
+  }, env);
+}
+
+// Custom Native Mute (Timeout API + Muted Role)
+async function timeoutUser(guildId, userId, durationMs, reason, moderator, env) {
+  const maxTimeoutMs = 28 * 24 * 60 * 60 * 1000;
   const actualDuration = Math.min(durationMs, maxTimeoutMs);
   const until = new Date(Date.now() + actualDuration).toISOString();
 
-  // 1. Set Communication Timeout
+  // Apply Discord Timeout
   await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
     method: 'PATCH',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      communication_disabled_until: until,
-      reason: reason
-    })
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ communication_disabled_until: until, reason })
   });
 
-  // 2. Assign Muted Role
+  // Assign Muted Role
   await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
     method: 'PUT',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Mute')
-    }
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
   });
+
+  await logInfraction(userId, 'MUTE', reason, moderator, env);
 }
 
-// Clears communication timeout AND removes the Muted role
-async function unmuteUser(guildId, userId, reason, env) {
-  // 1. Clear Timeout
+// Custom Native Unmute
+async function unmuteUser(guildId, userId, reason, moderator, env) {
   await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
     method: 'PATCH',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      communication_disabled_until: null,
-      reason: reason
-    })
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ communication_disabled_until: null, reason })
   });
 
-  // 2. Remove Muted Role
   await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
     method: 'DELETE',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Automated / Command Unmute')
-    }
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
   });
+
+  await logInfraction(userId, 'UNMUTE', reason, moderator, env);
 }
 
-// Duration string parser helper (e.g. "30m", "2h", "1d")
+// Custom Native Ban
+async function banUser(guildId, userId, reason, moderator, env, deleteMessageSeconds = 0) {
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delete_message_seconds: deleteMessageSeconds, reason })
+  });
+
+  await logInfraction(userId, 'BAN', reason, moderator, env);
+}
+
+// Custom Native Unban
+async function unbanUser(guildId, userId, reason, moderator, env) {
+  await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
+  });
+
+  await logInfraction(userId, 'UNBAN', reason, moderator, env);
+}
+
 function parseDurationString(str) {
-  if (!str) return 30 * 60 * 1000; // Default 30 mins
+  if (!str) return 30 * 60 * 1000;
   const match = str.trim().match(/^(\d+)\s*([mhd])$/i);
   if (!match) return null;
   const num = parseInt(match[1], 10);
@@ -291,34 +339,7 @@ function parseDurationString(str) {
   if (unit === 'd') return num * 24 * 60 * 60 * 1000;
   return null;
 }
-// Ban User via Discord REST API
-// Ban User via Discord REST API
-async function banUser(guildId, userId, reason, env, deleteMessageSeconds = 0) {
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      delete_message_seconds: deleteMessageSeconds,
-      reason: reason
-    })
-  });
-}
 
-// Unban User via Discord REST API
-async function unbanUser(guildId, userId, reason, env) {
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bot ${env.DISCORD_TOKEN}`,
-      'X-Audit-Log-Reason': encodeURIComponent(reason || 'Manual /unban command')
-    }
-  });
-}
-
-// Track infractions per user in Cloudflare KV & execute punishment
 async function applyPunishment(guildId, channelId, userId, username, ruleKey, reason, env) {
   const kvKey = `offense:${userId}:${ruleKey}`;
   let count = 0;
@@ -332,28 +353,27 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
 
   const ladder = PUNISHMENT_MATRIX[ruleKey];
   if (!ladder) {
-    await warnUser(channelId, userId, reason, env);
+    await warnUser(channelId, userId, reason, 'Laxmi Automod', env);
     return { actionLabel: 'Warning', offenseCount: count };
   }
 
-  // Use maximum punishment tier if infractions exceed ladder length
   const punishmentIndex = Math.min(count - 1, ladder.length - 1);
   const punishment = ladder[punishmentIndex];
 
   let actionLabel = punishment.label;
 
   if (punishment.type === 'warn') {
-    await warnUser(channelId, userId, `${reason} (Offense #${count})`, env);
+    await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
   } else if (punishment.type === 'mute') {
-    await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, env);
-    await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, env);
+    await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'Laxmi Automod', env);
   } else if (punishment.type === 'ban') {
-    await banUser(guildId, userId, `${reason} (Offense #${count})`, env);
-    await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, env);
+    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, 'Laxmi Automod', env);
   } else if (punishment.type === 'ban_and_mute') {
-    await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, env);
-    await banUser(guildId, userId, `${reason} (Offense #${count})`, env);
-    await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, env);
+    await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'Laxmi Automod', env);
   }
 
   return { actionLabel, offenseCount: count };
@@ -385,10 +405,8 @@ async function sendLog(env, logEntry) {
 }
 
 // ============================================
-// DETECTION LAYERS
+// AUTOMOD DETECTION LAYERS
 // ============================================
-
-// Layer 1: Obscenity + Hinglish + Discord Ad Links
 function layer1Check(text) {
   if (profanityMatcher.hasMatch(text)) {
     return { flagged: true, rule: 'swearing_at_players', reason: 'Profanity detected', confidence: 'high' };
@@ -408,7 +426,6 @@ function layer1Check(text) {
   return { flagged: false };
 }
 
-// Check for duplicate message raids
 function raidCheck(channelId, content, userId) {
   const now = Date.now();
   const window = 10000;
@@ -423,10 +440,9 @@ function raidCheck(channelId, content, userId) {
   return { flagged: false };
 }
 
-// Anti-Spam: Check if non-staff sends 4 rapid messages in a row
 function checkRapidSpam(userId) {
   const now = Date.now();
-  const windowMs = 7000; // 7 second window
+  const windowMs = 7000;
   if (!userSpamTracker.has(userId)) {
     userSpamTracker.set(userId, []);
   }
@@ -436,13 +452,12 @@ function checkRapidSpam(userId) {
   userSpamTracker.set(userId, timestamps);
 
   if (timestamps.length >= 4) {
-    userSpamTracker.set(userId, []); // reset after triggering
+    userSpamTracker.set(userId, []);
     return true;
   }
   return false;
 }
 
-// Layer 2: Gemini / Gemma AI Rule Classification
 async function layer2AICheck(text, env) {
   const systemPrompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server.
 Categorize incoming user messages strictly into one of the following rule violation keys:
@@ -533,14 +548,6 @@ Return ONLY valid JSON matching the requested schema.`;
 // ============================================
 // WELCOME & ROLE BUTTON HANDLERS
 // ============================================
-async function sendDiscordMessage(channelId, payload, env) {
-  return fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-}
-
 async function getDMChannelId(userId, env) {
   const res = await fetch('https://discord.com/api/v10/users/@me/channels', {
     method: 'POST',
@@ -619,13 +626,14 @@ async function handleRoleToggle(interaction, roleId, env) {
 }
 
 // ============================================
-// SLASH COMMAND HANDLER
+// CUSTOM SLASH COMMAND HANDLER
 // ============================================
 async function handleSlashCommand(interaction, env) {
   const commandName = interaction.data.name;
   const memberRoles = interaction.member?.roles || [];
   const isStaff = memberRoles.some(r => MOD_ROLES.includes(r));
   const guildId = interaction.guild_id || MAIN_GUILD_ID;
+  const staffUsername = interaction.member?.user?.username || 'Staff';
 
   if (!isStaff) {
     return jsonResponse({
@@ -664,11 +672,81 @@ async function handleSlashCommand(interaction, env) {
     });
   }
 
+  // NATIVE COMMAND: /warn
+  if (commandName === 'warn') {
+    const options = interaction.data.options || [];
+    const targetUserId = options.find(o => o.name === 'user')?.value;
+    const reason = options.find(o => o.name === 'reason')?.value || 'Warned by staff';
+
+    await warnUser(interaction.channel_id, targetUserId, reason, staffUsername, env);
+    await sendLog(env, {
+      userId: targetUserId,
+      username: `<@${targetUserId}>`,
+      channelId: interaction.channel_id,
+      action: 'Warning',
+      rule: 'Manual Staff Warn',
+      reason: reason,
+      layer: 'Staff Command (/warn)',
+      confidence: 'high',
+      message: `Issued by ${staffUsername}`
+    });
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `⚠️ <@${targetUserId}> has been warned.\n**Reason:** ${reason}` }
+    });
+  }
+
+  // NATIVE COMMAND: /warns or /infractions
+  if (commandName === 'warns' || commandName === 'infractions') {
+    const options = interaction.data.options || [];
+    const targetUserId = options.find(o => o.name === 'user')?.value;
+    const history = await getInfractions(targetUserId, env);
+
+    if (history.length === 0) {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: `✅ <@${targetUserId}> has a clean record (0 infractions).` }
+      });
+    }
+
+    const fields = history.slice(-10).map(i => ({
+      name: `#${i.id} | ${i.type} (${new Date(i.timestamp).toLocaleDateString()})`,
+      value: `**Reason:** ${i.reason}\n**By:** ${i.moderator}`,
+      inline: false
+    }));
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: {
+        embeds: [{
+          title: `📜 Infraction History for <@${targetUserId}>`,
+          description: `Total Infractions: **${history.length}**`,
+          color: 0xC8102E,
+          fields
+        }]
+      }
+    });
+  }
+
+  // NATIVE COMMAND: /clearwarns
+  if (commandName === 'clearwarns') {
+    const options = interaction.data.options || [];
+    const targetUserId = options.find(o => o.name === 'user')?.value;
+
+    await clearInfractions(targetUserId, env);
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `🧹 Cleared all infractions and warning history for <@${targetUserId}>.` }
+    });
+  }
+
+  // NATIVE COMMAND: /mute
   if (commandName === 'mute') {
     const options = interaction.data.options || [];
     const targetUserId = options.find(o => o.name === 'user')?.value;
     const durationInput = options.find(o => o.name === 'duration')?.value || '30m';
-    const reason = options.find(o => o.name === 'reason')?.value || 'Muted by staff command';
+    const reason = options.find(o => o.name === 'reason')?.value || 'Muted by staff';
 
     const durationMs = parseDurationString(durationInput);
     if (!durationMs) {
@@ -678,79 +756,82 @@ async function handleSlashCommand(interaction, env) {
       });
     }
 
-    await timeoutUser(guildId, targetUserId, durationMs, reason, env);
+    await timeoutUser(guildId, targetUserId, durationMs, reason, staffUsername, env);
     await sendLog(env, {
       userId: targetUserId,
       username: `<@${targetUserId}>`,
       channelId: interaction.channel_id,
-      action: `Muted (${durationInput}) + Muted Role Added`,
-      rule: 'Manual Mod Command',
+      action: `Muted (${durationInput})`,
+      rule: 'Manual Staff Mute',
       reason: reason,
       layer: 'Staff Command (/mute)',
       confidence: 'high',
-      message: `Executed by <@${interaction.member?.user?.id}>`
+      message: `Issued by ${staffUsername}`
     });
 
     return jsonResponse({
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `🔇 <@${targetUserId}> has been muted for **${durationInput}** and given the <@&${MUTED_ROLE_ID}> role.\n**Reason:** ${reason}` }
+      data: { content: `🔇 <@${targetUserId}> has been muted for **${durationInput}**.\n**Reason:** ${reason}` }
     });
   }
 
+  // NATIVE COMMAND: /unmute
   if (commandName === 'unmute') {
     const options = interaction.data.options || [];
     const targetUserId = options.find(o => o.name === 'user')?.value;
-    const reason = options.find(o => o.name === 'reason')?.value || 'Unmuted by staff command';
+    const reason = options.find(o => o.name === 'reason')?.value || 'Unmuted by staff';
 
-    await unmuteUser(guildId, targetUserId, reason, env);
+    await unmuteUser(guildId, targetUserId, reason, staffUsername, env);
     await sendLog(env, {
       userId: targetUserId,
       username: `<@${targetUserId}>`,
       channelId: interaction.channel_id,
-      action: 'Unmuted + Muted Role Removed',
-      rule: 'Manual Mod Command',
+      action: 'Unmuted',
+      rule: 'Manual Staff Unmute',
       reason: reason,
       layer: 'Staff Command (/unmute)',
       confidence: 'high',
-      message: `Executed by <@${interaction.member?.user?.id}>`
+      message: `Issued by ${staffUsername}`
     });
 
     return jsonResponse({
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `🔊 <@${targetUserId}> has been unmuted and the <@&${MUTED_ROLE_ID}> role was removed.\n**Reason:** ${reason}` }
+      data: { content: `🔊 <@${targetUserId}> has been unmuted.\n**Reason:** ${reason}` }
     });
   }
 
+  // NATIVE COMMAND: /ban
   if (commandName === 'ban') {
     const options = interaction.data.options || [];
     const targetUserId = options.find(o => o.name === 'user')?.value;
-    const reason = options.find(o => o.name === 'reason')?.value || 'Banned by staff command';
+    const reason = options.find(o => o.name === 'reason')?.value || 'Banned by staff';
     const deleteDays = options.find(o => o.name === 'delete_days')?.value || 0;
     const deleteSeconds = Math.min(Math.max(deleteDays, 0), 7) * 24 * 60 * 60;
 
-    await banUser(guildId, targetUserId, reason, env, deleteSeconds);
+    await banUser(guildId, targetUserId, reason, staffUsername, env, deleteSeconds);
     await sendLog(env, {
       userId: targetUserId,
       username: `<@${targetUserId}>`,
       channelId: interaction.channel_id,
       action: 'Banned',
-      rule: 'Manual Mod Command',
+      rule: 'Manual Staff Ban',
       reason: reason,
       layer: 'Staff Command (/ban)',
       confidence: 'high',
-      message: `Executed by <@${interaction.member?.user?.id}>`
+      message: `Issued by ${staffUsername}`
     });
 
     return jsonResponse({
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `🔨 <@${targetUserId}> has been banned from the server.\n**Reason:** ${reason}` }
+      data: { content: `🔨 <@${targetUserId}> has been banned.\n**Reason:** ${reason}` }
     });
   }
 
+  // NATIVE COMMAND: /unban
   if (commandName === 'unban') {
     const options = interaction.data.options || [];
     const targetUserId = options.find(o => o.name === 'user_id')?.value;
-    const reason = options.find(o => o.name === 'reason')?.value || 'Unbanned by staff command';
+    const reason = options.find(o => o.name === 'reason')?.value || 'Unbanned by staff';
 
     if (!targetUserId || !/^\d{17,20}$/.test(targetUserId.trim())) {
       return jsonResponse({
@@ -759,17 +840,17 @@ async function handleSlashCommand(interaction, env) {
       });
     }
 
-    await unbanUser(guildId, targetUserId.trim(), reason, env);
+    await unbanUser(guildId, targetUserId.trim(), reason, staffUsername, env);
     await sendLog(env, {
       userId: targetUserId.trim(),
       username: `<@${targetUserId.trim()}>`,
       channelId: interaction.channel_id,
       action: 'Unbanned',
-      rule: 'Manual Mod Command',
+      rule: 'Manual Staff Unban',
       reason: reason,
       layer: 'Staff Command (/unban)',
       confidence: 'high',
-      message: `Executed by <@${interaction.member?.user?.id}>`
+      message: `Issued by ${staffUsername}`
     });
 
     return jsonResponse({
@@ -783,6 +864,7 @@ async function handleSlashCommand(interaction, env) {
     data: { content: '❓ Unknown command.', flags: 64 }
   });
 }
+
 // ============================================
 // AUTOMOD MESSAGE PROCESSOR
 // ============================================
@@ -796,7 +878,7 @@ async function handleMessage(payload, env) {
   const isStaff = roleIds.some(r => MOD_ROLES.includes(r));
   const isLinkExempt = roleIds.some(r => LINK_EXEMPT_ROLES.includes(r));
 
-  // 1. Anti-Spam Check (4 consecutive messages)
+  // 1. Anti-Spam Check
   if (!isStaff && checkRapidSpam(userId)) {
     await deleteMessage(channelId, messageId, env);
     const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, 'flooding_chat', 'Flooding chat (4 consecutive messages)', env);
@@ -809,7 +891,7 @@ async function handleMessage(payload, env) {
   if (l1.flagged) {
     if (isLinkExempt && l1.rule === 'discord_advertising') return;
     await deleteMessage(channelId, messageId, env);
-    
+
     if (isStaff) {
       await sendLog(env, { userId, username, channelId, action: 'Deleted (Staff Exempt from Punishment)', rule: l1.rule, reason: l1.reason, layer: 'Layer 1', confidence: l1.confidence, message: content });
       return;
