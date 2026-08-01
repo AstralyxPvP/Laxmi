@@ -182,7 +182,7 @@ async function logInfraction(userId, type, reason, moderator, env) {
   const kvKey = `history:${userId}`;
   let history = [];
   try {
-    const raw = await env.DESIBOT_KV.get(kvKey);
+    const raw = await env.LAXMI_KV.get(kvKey);
     if (raw) history = JSON.parse(raw);
   } catch (e) {}
 
@@ -195,13 +195,13 @@ async function logInfraction(userId, type, reason, moderator, env) {
   };
 
   history.push(entry);
-  await env.DESIBOT_KV.put(kvKey, JSON.stringify(history));
+  await env.LAXMI_KV.put(kvKey, JSON.stringify(history));
   return entry;
 }
 
 async function getInfractions(userId, env) {
   try {
-    const raw = await env.DESIBOT_KV.get(`history:${userId}`);
+    const raw = await env.LAXMI_KV.get(`history:${userId}`);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
     return [];
@@ -209,7 +209,7 @@ async function getInfractions(userId, env) {
 }
 
 async function clearInfractions(userId, env) {
-  await env.DESIBOT_KV.delete(`history:${userId}`);
+  await env.LAXMI_KV.delete(`history:${userId}`);
 }
 
 // ============================================
@@ -224,14 +224,14 @@ function jsonResponse(data, status = 200) {
 
 async function getIgnoredChannels(env) {
   try {
-    const stored = await env.DESIBOT_KV.get('ignored_channels');
+    const stored = await env.LAXMI_KV.get('ignored_channels');
     if (stored) return JSON.parse(stored);
   } catch (e) {}
   return [...DEFAULT_IGNORED_CHANNELS];
 }
 
 async function setIgnoredChannels(channels, env) {
-  await env.DESIBOT_KV.put('ignored_channels', JSON.stringify(channels));
+  await env.LAXMI_KV.put('ignored_channels', JSON.stringify(channels));
 }
 
 async function deleteMessage(channelId, messageId, env) {
@@ -344,12 +344,12 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
   const kvKey = `offense:${userId}:${ruleKey}`;
   let count = 0;
   try {
-    const existing = await env.DESIBOT_KV.get(kvKey);
+    const existing = await env.LAXMI_KV.get(kvKey);
     if (existing) count = parseInt(existing, 10);
   } catch (e) {}
 
   count += 1;
-  await env.DESIBOT_KV.put(kvKey, count.toString());
+  await env.LAXMI_KV.put(kvKey, count.toString());
 
   const ladder = PUNISHMENT_MATRIX[ruleKey];
   if (!ladder) {

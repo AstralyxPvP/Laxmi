@@ -1,9 +1,9 @@
-name = "desibot"
+name = "laxmi"
 main = "index.js"
 compatibility_date = "2026-06-01"
 
 kv_namespaces = [
-  { binding = "DESIBOT_KV", id = "756eb1ebf2ad4bb785de39dda224f31d" }
+  { binding = "LAXMI_KV", id = "756eb1ebf2ad4bb785de39dda224f31d" }
 ]
 
 # Required secrets (set with: wrangler secret put NAME)
