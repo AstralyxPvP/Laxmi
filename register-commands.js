@@ -1,5 +1,5 @@
 /**
- * Laxmi | AstralyxPvP Assistant — Register Slash Commands
+ * DesiBot | AstralyxPvP Assistant — Register Slash Commands
  * Run once: node register-commands.js
  */
 
@@ -16,7 +16,7 @@ const commands = [
   },
   {
     name: 'ignore-add',
-    description: 'Add a channel to Laxmi ignore list [Staff only]',
+    description: 'Add a channel to DesiBot ignore list [Staff only]',
     options: [{
       name: 'channel',
       description: 'Channel to ignore',
@@ -26,7 +26,7 @@ const commands = [
   },
   {
     name: 'ignore-remove',
-    description: 'Remove a channel from Laxmi ignore list [Staff only]',
+    description: 'Remove a channel from DesiBot ignore list [Staff only]',
     options: [{
       name: 'channel',
       description: 'Channel to unignore',

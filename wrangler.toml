@@ -1,13 +1,17 @@
-name = "laxmi"
+name = "desibot"
 main = "index.js"
 compatibility_date = "2026-06-01"
 
 kv_namespaces = [
-  { binding = "LAXMI_KV", id = "756eb1ebf2ad4bb785de39dda224f31d" }
+  { binding = "DESIBOT_KV", id = "756eb1ebf2ad4bb785de39dda224f31d" }
 ]
 
+# Required secrets (set with: wrangler secret put NAME)
+# DISCORD_TOKEN, DISCORD_PUBLIC_KEY, GATEWAY_SECRET, GOOGLE_API_KEY
+# FORUM_SECRET — shared with the AstralyxForums site to call /moderate
+
 [vars]
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+GEMINI_MODEL = "gemini-3.5-flash-lite-preview"
 
 [observability.logs]
 enabled = true

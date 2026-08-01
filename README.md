@@ -1,2 +1,2 @@
-# Laxmi
-Laxmi is a Discord AutoMod Bot
+# DesiBot
+DesiBot is a Discord AutoMod Bot

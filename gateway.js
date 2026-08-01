@@ -1,5 +1,5 @@
 /**
- * Laxmi | AstralyxPvP Assistant — Gateway
+ * DesiBot | AstralyxPvP Assistant — Gateway
  * Render Web Service
  */
 
@@ -22,7 +22,7 @@ if (!DISCORD_TOKEN || !WORKER_URL || !GATEWAY_SECRET) {
 // Keep Render alive
 const server = http.createServer((req, res) => {
   res.writeHead(200);
-  res.end('Laxmi is watching 👀');
+  res.end('DesiBot is watching 👀');
 });
 server.listen(PORT, () => console.log(`🌐 HTTP alive on port ${PORT}`));
 
@@ -63,7 +63,7 @@ const client = new Client({
 });
 
 client.once('ready', () => {
-  console.log(`✅ Laxmi online — ${client.user.tag}`);
+  console.log(`✅ DesiBot online — ${client.user.tag}`);
   console.log(`👀 Watching all messages + member joins`);
 });
 

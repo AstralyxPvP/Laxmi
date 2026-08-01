@@ -1,5 +1,5 @@
 /**
- * Laxmi | AstralyxPvP Assistant
+ * DesiBot | AstralyxPvP Assistant
  * Smart Automod + Welcome Bot + Custom Native Moderation Engine
  * Built by IndianCoder3
  */
@@ -15,7 +15,7 @@ import {
 // CONSTANTS & CONFIGURATION
 // ============================================
 const WELCOME_CHANNEL_ID = '1477033060078850264';
-const LAXMI_WELCOMER_CHANNEL_ID = '1529028842188967977';
+const DESIBOT_WELCOMER_CHANNEL_ID = '1529028842188967977';
 const MAIN_GUILD_ID = '1477024790555672718';
 const MUTED_ROLE_ID = '1529919178071343214';
 
@@ -50,7 +50,7 @@ const DEFAULT_IGNORED_CHANNELS = [
   '1477035141221060791', // giveaways
   '1477035158770155743', // tournaments
   '1477272501699481642', // qotd
-  '1529028842188967977', // laxmi-welcomer
+  '1529028842188967977', // desibot-welcomer
 ];
 
 // ============================================
@@ -182,7 +182,7 @@ async function logInfraction(userId, type, reason, moderator, env) {
   const kvKey = `history:${userId}`;
   let history = [];
   try {
-    const raw = await env.LAXMI_KV.get(kvKey);
+    const raw = await env.DESIBOT_KV.get(kvKey);
     if (raw) history = JSON.parse(raw);
   } catch (e) {}
 
@@ -195,13 +195,13 @@ async function logInfraction(userId, type, reason, moderator, env) {
   };
 
   history.push(entry);
-  await env.LAXMI_KV.put(kvKey, JSON.stringify(history));
+  await env.DESIBOT_KV.put(kvKey, JSON.stringify(history));
   return entry;
 }
 
 async function getInfractions(userId, env) {
   try {
-    const raw = await env.LAXMI_KV.get(`history:${userId}`);
+    const raw = await env.DESIBOT_KV.get(`history:${userId}`);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
     return [];
@@ -209,7 +209,7 @@ async function getInfractions(userId, env) {
 }
 
 async function clearInfractions(userId, env) {
-  await env.LAXMI_KV.delete(`history:${userId}`);
+  await env.DESIBOT_KV.delete(`history:${userId}`);
 }
 
 // ============================================
@@ -224,14 +224,14 @@ function jsonResponse(data, status = 200) {
 
 async function getIgnoredChannels(env) {
   try {
-    const stored = await env.LAXMI_KV.get('ignored_channels');
+    const stored = await env.DESIBOT_KV.get('ignored_channels');
     if (stored) return JSON.parse(stored);
   } catch (e) {}
   return [...DEFAULT_IGNORED_CHANNELS];
 }
 
 async function setIgnoredChannels(channels, env) {
-  await env.LAXMI_KV.put('ignored_channels', JSON.stringify(channels));
+  await env.DESIBOT_KV.put('ignored_channels', JSON.stringify(channels));
 }
 
 async function deleteMessage(channelId, messageId, env) {
@@ -263,7 +263,7 @@ async function warnUser(channelId, userId, reason, moderator, env) {
         { name: 'Reason', value: reason, inline: false },
         { name: 'Total Infractions', value: `${history.length}`, inline: true }
       ],
-      footer: { text: 'Laxmi Custom Automod • AstralyxPvP' },
+      footer: { text: 'DesiBot Custom Automod • AstralyxPvP' },
       timestamp: new Date().toISOString()
     }]
   }, env);
@@ -344,16 +344,16 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
   const kvKey = `offense:${userId}:${ruleKey}`;
   let count = 0;
   try {
-    const existing = await env.LAXMI_KV.get(kvKey);
+    const existing = await env.DESIBOT_KV.get(kvKey);
     if (existing) count = parseInt(existing, 10);
   } catch (e) {}
 
   count += 1;
-  await env.LAXMI_KV.put(kvKey, count.toString());
+  await env.DESIBOT_KV.put(kvKey, count.toString());
 
   const ladder = PUNISHMENT_MATRIX[ruleKey];
   if (!ladder) {
-    await warnUser(channelId, userId, reason, 'Laxmi Automod', env);
+    await warnUser(channelId, userId, reason, 'DesiBot Automod', env);
     return { actionLabel: 'Warning', offenseCount: count };
   }
 
@@ -363,17 +363,17 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
   let actionLabel = punishment.label;
 
   if (punishment.type === 'warn') {
-    await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
   } else if (punishment.type === 'mute') {
-    await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
-    await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
   } else if (punishment.type === 'ban') {
-    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
-    await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
   } else if (punishment.type === 'ban_and_mute') {
-    await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
-    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'Laxmi Automod', env);
-    await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'Laxmi Automod', env);
+    await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
   }
 
   return { actionLabel, offenseCount: count };
@@ -386,7 +386,7 @@ async function sendLog(env, logEntry) {
     headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       embeds: [{
-        title: '🔨 Laxmi Automod Action',
+        title: '🔨 DesiBot Automod Action',
         color: 0xC8102E,
         fields: [
           { name: 'User', value: `<@${logEntry.userId}> (${logEntry.username})`, inline: true },
@@ -496,7 +496,9 @@ Return ONLY valid JSON matching the requested schema.`;
 
   const modelChain = [
     env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
-    env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview',
+    env.GEMINI_MODEL || 'gemini-3.5-flash-lite-preview',
+    'gemini-3.1-flash-lite-preview',
+    'gemini-2.5-flash-lite',
   ];
 
   for (const model of modelChain) {
@@ -566,33 +568,46 @@ async function sendDM(userId, payload, env) {
   } catch (e) {}
 }
 
+async function buildRolePickerEmbed() {
+  return {
+    title: '🔔 Get Notified — Pick Your Roles!',
+    description: 'Use the buttons below to assign yourself notification roles. Click again to remove.',
+    color: 0xC8102E,
+    fields: NOTIFICATION_ROLES.map(r => ({ name: r.label, value: `<@&${r.roleId}>`, inline: true })),
+    footer: { text: 'AstralyxPvP • Role Selector' }
+  };
+}
+
+function buildRolePickerComponents() {
+  return [{
+    type: 1,
+    components: NOTIFICATION_ROLES.map(r => ({ type: 2, style: 2, label: r.label, custom_id: `role_toggle_${r.roleId}` }))
+  }];
+}
+
 async function handleMemberJoin(userId, username, env) {
   const welcomeEmbed = {
     title: '🙏 Welcome to AstralyxPvP!',
-    description: `Namaste <@${userId}>! Welcome to **AstralyxPvP** — India's premier Minecraft Java PvP server!\n\n⚔️ **Server IP:** \`java.astralyxpvp.int.yt\`\n🌐 **Website:** [astralyxpvp.pages.dev](https://astralyxpvp.pages.dev)\n\nHead over to <#1477033060078850264> to get started, check <#1477033071076442165> for the rules, and pick up your notification roles in your DMs!\n\nSee you on the battlefield! 🔥`,
+    description: `Namaste <@${userId}>! Welcome to **AstralyxPvP** — India's premier Minecraft Java PvP server!\n\n⚔️ **Server IP:** \`java.astralyxpvp.int.yt\`\n🌐 **Website:** [astralyxpvp.pages.dev](https://astralyxpvp.pages.dev)\n\nHead over to <#1477033060078850264> to get started and check <#1477033071076442165> for the rules!\n\nSee you on the battlefield! 🔥`,
     color: 0xC8102E,
     thumbnail: { url: 'https://astralyxpvp.pages.dev/Assets/logo.png' },
     footer: { text: `Welcome, ${username}! • AstralyxPvP` },
     timestamp: new Date().toISOString()
   };
 
-  await sendDiscordMessage(LAXMI_WELCOMER_CHANNEL_ID, { content: `<@${userId}>`, embeds: [welcomeEmbed] }, env);
-  await sendDM(userId, { embeds: [welcomeEmbed] }, env);
+  await sendDiscordMessage(DESIBOT_WELCOMER_CHANNEL_ID, { content: `<@${userId}>`, embeds: [welcomeEmbed] }, env);
+
+  // DM includes the welcome message AND the notification role picker buttons
+  await sendDM(userId, {
+    embeds: [welcomeEmbed, await buildRolePickerEmbed()],
+    components: buildRolePickerComponents()
+  }, env);
 }
 
 async function handleWelcomeReactionOptions(env) {
   await sendDiscordMessage(WELCOME_CHANNEL_ID, {
-    embeds: [{
-      title: '🔔 Get Notified — Pick Your Roles!',
-      description: 'Click the buttons below to assign yourself notification roles. Click again to remove.',
-      color: 0xC8102E,
-      fields: NOTIFICATION_ROLES.map(r => ({ name: r.label, value: `<@&${r.roleId}>`, inline: true })),
-      footer: { text: 'AstralyxPvP • Role Selector' }
-    }],
-    components: [{
-      type: 1,
-      components: NOTIFICATION_ROLES.map(r => ({ type: 2, style: 2, label: r.label, custom_id: `role_toggle_${r.roleId}` }))
-    }]
+    embeds: [await buildRolePickerEmbed()],
+    components: buildRolePickerComponents()
   }, env);
 }
 
@@ -931,12 +946,52 @@ async function handleMessage(payload, env) {
 }
 
 // ============================================
+// FORUM MODERATION CHECK (READ-ONLY VERDICT)
+// ============================================
+async function handleModerate(payload, env) {
+  const content = String(payload.content || '').trim();
+  if (!content) {
+    return jsonResponse({ verdict: 'ok', rule: 'none', reason: 'Empty content', confidence: 'high', layer: 'validation' });
+  }
+
+  const l1 = layer1Check(content);
+  if (l1.flagged) {
+    return jsonResponse({
+      verdict: 'block',
+      rule: l1.rule,
+      reason: l1.reason,
+      confidence: l1.confidence,
+      layer: 'layer1'
+    });
+  }
+
+  const l2 = await layer2AICheck(content, env);
+  if (l2.flagged && l2.rule_violation !== 'none') {
+    return jsonResponse({
+      verdict: l2.confidence === 'high' ? 'block' : 'flag',
+      rule: l2.rule_violation,
+      reason: l2.reason || l2.rule_violation,
+      confidence: l2.confidence,
+      layer: 'layer2'
+    });
+  }
+
+  return jsonResponse({
+    verdict: 'ok',
+    rule: 'none',
+    reason: 'Clean',
+    confidence: 'high',
+    layer: 'all'
+  });
+}
+
+// ============================================
 // WORKER ENTRY
 // ============================================
 export default {
   async fetch(request, env, ctx) {
     if (request.method === 'GET') {
-      return new Response('Laxmi | AstralyxPvP Assistant is online 🙏', { headers: { 'Content-Type': 'text/plain' } });
+      return new Response('DesiBot | AstralyxPvP Assistant is online 🙏', { headers: { 'Content-Type': 'text/plain' } });
     }
 
     const authHeader = request.headers.get('authorization');
@@ -971,12 +1026,20 @@ export default {
       return jsonResponse({ type: InteractionResponseType.PONG });
     }
 
-    // Gateway Forwarding
-    if (!authHeader || authHeader !== `Bearer ${env.GATEWAY_SECRET}`) {
+    // Gateway / Moderator Forwarding
+    const isGateway = authHeader === `Bearer ${env.GATEWAY_SECRET}`;
+    const isModerator = authHeader === `Bearer ${env.FORUM_SECRET}`;
+    if (!isGateway && !isModerator) {
       return jsonResponse({ error: 'Unauthorized' }, 401);
     }
 
     const payload = await request.json();
+
+    // Forum moderation check — synchronous verdict for the forums frontend
+    if (payload.type === 'moderate') {
+      if (!isModerator) return jsonResponse({ error: 'Unauthorized' }, 401);
+      return await handleModerate(payload, env);
+    }
 
     if (payload.type === 'member_join') {
       ctx.waitUntil(handleMemberJoin(payload.userId, payload.username, env));
