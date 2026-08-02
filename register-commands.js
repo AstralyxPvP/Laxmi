@@ -117,6 +117,48 @@ const commands = [
         required: false
       }
     ]
+  },
+  {
+    name: 'warn',
+    description: 'Warn a user and log the infraction [Staff only]',
+    options: [
+      {
+        name: 'user',
+        description: 'The user to warn',
+        type: 6, // USER
+        required: true
+      },
+      {
+        name: 'reason',
+        description: 'Reason for the warning',
+        type: 3, // STRING
+        required: false
+      }
+    ]
+  },
+  {
+    name: 'warns',
+    description: 'View a user\u2019s infraction history [Staff only]',
+    options: [
+      {
+        name: 'user',
+        description: 'The user to check',
+        type: 6, // USER
+        required: true
+      }
+    ]
+  },
+  {
+    name: 'clearwarns',
+    description: 'Clear all infractions and warning history for a user [Staff only]',
+    options: [
+      {
+        name: 'user',
+        description: 'The user to clear warnings for',
+        type: 6, // USER
+        required: true
+      }
+    ]
   }
 ];
 
