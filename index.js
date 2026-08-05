@@ -16,7 +16,7 @@ import {
 // ============================================
 const WELCOME_CHANNEL_ID = '1477033060078850264';
 const DESIBOT_WELCOMER_CHANNEL_ID = '1529028842188967977';
-const MAIN_GUILD_ID = '1477024790555672718';
+const MAIN_GUILD_ID = '1477025023800901766';
 const MUTED_ROLE_ID = '1529919178071343214';
 
 const NOTIFICATION_ROLES = [
@@ -265,6 +265,18 @@ async function getIgnoredChannels(env) {
 
 async function setIgnoredChannels(channels, env) {
   await env.LAXMI_KV.put('ignored_channels', JSON.stringify(channels));
+}
+
+async function getIgnoredUsers(env) {
+  try {
+    const stored = await env.LAXMI_KV.get('ignored_users');
+    if (stored) return JSON.parse(stored);
+  } catch (e) {}
+  return [];
+}
+
+async function setIgnoredUsers(users, env) {
+  await env.LAXMI_KV.put('ignored_users', JSON.stringify(users));
 }
 
 async function deleteMessage(channelId, messageId, env) {
@@ -787,6 +799,28 @@ async function handleSlashCommandInner(interaction, env) {
     });
   }
 
+  if (commandName === 'ignore-user') {
+    const targetUserId = interaction.data.options?.[0]?.value;
+    const users = await getIgnoredUsers(env);
+    if (!users.includes(targetUserId)) users.push(targetUserId);
+    await setIgnoredUsers(users, env);
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `✅ <@${targetUserId}> added to the automod ignore list.`, flags: 64 }
+    });
+  }
+
+  if (commandName === 'unignore-user') {
+    const targetUserId = interaction.data.options?.[0]?.value;
+    let users = await getIgnoredUsers(env);
+    users = users.filter(u => u !== targetUserId);
+    await setIgnoredUsers(users, env);
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `✅ <@${targetUserId}> removed from the automod ignore list.`, flags: 64 }
+    });
+  }
+
   // NATIVE COMMAND: /warn
   if (commandName === 'warn') {
     const options = interaction.data.options || [];
@@ -989,6 +1023,9 @@ async function handleMessage(payload, env) {
 
   const ignoredChannels = await getIgnoredChannels(env);
   if (ignoredChannels.includes(channelId)) return;
+
+  const ignoredUsers = await getIgnoredUsers(env);
+  if (ignoredUsers.includes(userId)) return;
 
   const isLinkExempt = roleIds.some(r => LINK_EXEMPT_ROLES.includes(r));
 

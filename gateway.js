@@ -73,7 +73,8 @@ client.on('guildMemberAdd', async (member) => {
   await sendToWorker({
     type: 'member_join',
     userId: member.user.id,
-    username: member.displayName || member.user.globalName || member.user.username
+    username: member.displayName || member.user.globalName || member.user.username,
+    guildId: member.guild.id
   });
 });
 
@@ -88,7 +89,8 @@ client.on('messageCreate', async (message) => {
     messageId: message.id,
     userId: message.author.id,
     username: message.member?.displayName || message.author.username,
-    roleIds: message.member?.roles.cache.map(r => r.id) || []
+    roleIds: message.member?.roles.cache.map(r => r.id) || [],
+    guildId: message.guildId
   });
 });
 

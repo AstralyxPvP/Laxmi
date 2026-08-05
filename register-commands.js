@@ -35,6 +35,26 @@ const commands = [
     }]
   },
   {
+    name: 'ignore-user',
+    description: 'Add a user to the automod ignore list — their messages skip automod [Staff only]',
+    options: [{
+      name: 'user',
+      description: 'User to ignore',
+      type: 6, // USER
+      required: true
+    }]
+  },
+  {
+    name: 'unignore-user',
+    description: 'Remove a user from the automod ignore list [Staff only]',
+    options: [{
+      name: 'user',
+      description: 'User to unignore',
+      type: 6, // USER
+      required: true
+    }]
+  },
+  {
     name: 'mute',
     description: 'Mute a user and assign the Muted role [Staff only]',
     options: [
