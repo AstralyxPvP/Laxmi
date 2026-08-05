@@ -249,6 +249,15 @@ async function sendDiscordMessage(channelId, payload, env) {
   });
 }
 
+async function discordApi(url, options, env) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Discord API ${res.status}: ${err.message || JSON.stringify(err)}`);
+  }
+  return res;
+}
+
 // Custom Native Warning
 async function warnUser(channelId, userId, reason, moderator, env) {
   const entry = await logInfraction(userId, 'WARN', reason, moderator, env);
@@ -276,54 +285,58 @@ async function timeoutUser(guildId, userId, durationMs, reason, moderator, env) 
   const until = new Date(Date.now() + actualDuration).toISOString();
 
   // Apply Discord Timeout
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+  await discordApi(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
     method: 'PATCH',
     headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ communication_disabled_until: until, reason })
-  });
+  }, env);
 
-  // Assign Muted Role
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
-  });
+  // Assign Muted Role (best effort, don't throw)
+  try {
+    await discordApi(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
+    }, env);
+  } catch {}
 
   await logInfraction(userId, 'MUTE', reason, moderator, env);
 }
 
 // Custom Native Unmute
 async function unmuteUser(guildId, userId, reason, moderator, env) {
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+  await discordApi(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
     method: 'PATCH',
     headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ communication_disabled_until: null, reason })
-  });
+  }, env);
 
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
-    method: 'DELETE',
-    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
-  });
+  try {
+    await discordApi(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${MUTED_ROLE_ID}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
+    }, env);
+  } catch {}
 
   await logInfraction(userId, 'UNMUTE', reason, moderator, env);
 }
 
 // Custom Native Ban
 async function banUser(guildId, userId, reason, moderator, env, deleteMessageSeconds = 0) {
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
+  await discordApi(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
     method: 'PUT',
     headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete_message_seconds: deleteMessageSeconds, reason })
-  });
+  }, env);
 
   await logInfraction(userId, 'BAN', reason, moderator, env);
 }
 
 // Custom Native Unban
 async function unbanUser(guildId, userId, reason, moderator, env) {
-  await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
+  await discordApi(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
     method: 'DELETE',
     headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
-  });
+  }, env);
 
   await logInfraction(userId, 'UNBAN', reason, moderator, env);
 }
@@ -362,18 +375,23 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
 
   let actionLabel = punishment.label;
 
-  if (punishment.type === 'warn') {
-    await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
-  } else if (punishment.type === 'mute') {
-    await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
-    await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
-  } else if (punishment.type === 'ban') {
-    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
-    await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
-  } else if (punishment.type === 'ban_and_mute') {
-    await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
-    await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
-    await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
+  try {
+    if (punishment.type === 'warn') {
+      await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    } else if (punishment.type === 'mute') {
+      await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    } else if (punishment.type === 'ban') {
+      await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    } else if (punishment.type === 'ban_and_mute') {
+      await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
+    }
+  } catch (e) {
+    actionLabel = `${punishment.label} (FAILED)`;
+    await warnUser(channelId, userId, `⚠️ Automod punishment failed: ${e.message}`, 'DesiBot Automod', env).catch(() => {});
   }
 
   return { actionLabel, offenseCount: count };
@@ -644,6 +662,17 @@ async function handleRoleToggle(interaction, roleId, env) {
 // CUSTOM SLASH COMMAND HANDLER
 // ============================================
 async function handleSlashCommand(interaction, env) {
+  try {
+    return await handleSlashCommandInner(interaction, env);
+  } catch (e) {
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `❌ Command failed: ${e.message}\n\nCheck bot permissions and role hierarchy.`, flags: 64 }
+    });
+  }
+}
+
+async function handleSlashCommandInner(interaction, env) {
   const commandName = interaction.data.name;
   const memberRoles = interaction.member?.roles || [];
   const isStaff = memberRoles.some(r => MOD_ROLES.includes(r));
