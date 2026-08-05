@@ -39,6 +39,39 @@ const MOD_ROLES = [
   '1477025502119334109', // Mod
 ];
 
+const SR_DEV_ROLE_ID = '1529483674817532066';
+const JR_DEV_ROLE_ID = '1530947152900259930';
+
+// Full active-staff roster — never banned by automod
+const BAN_EXEMPT_ROLES = [
+  '1477025238784151554', // Owner
+  '1477291491003994214', // Co-Owner
+  '1502815102716608552', // Chief Manager
+  '1497335106074050620', // Sr. Manager
+  '1483209618485284964', // Manager
+  '1498734182615089314', // Head of General Affairs
+  '1498734243352678630', // Head of Internal Affairs
+  SR_DEV_ROLE_ID,         // Sr. Developer
+  '1497316294632931358', // Developer
+  JR_DEV_ROLE_ID,         // Jr. Developer
+  '1497316250945323070', // Admin
+  '1497316120452136960', // Sr. Mod
+  '1477025502119334109', // Mod
+  '1497316057214484735', // Jr. Mod
+  '1477025528174219476', // Helper
+  '1501217374102229185', // Trial Staff
+];
+
+// Sr. Developer and above — exempt from mutes too (warns only)
+const MUTE_EXEMPT_ROLES = [
+  '1477025238784151554', // Owner
+  '1477291491003994214', // Co-Owner
+  '1502815102716608552', // Chief Manager
+  '1497335106074050620', // Sr. Manager
+  '1483209618485284964', // Manager
+  SR_DEV_ROLE_ID,         // Sr. Developer
+];
+
 const LINK_EXEMPT_ROLES = [...MOD_ROLES];
 
 const DEFAULT_IGNORED_CHANNELS = [
@@ -353,7 +386,45 @@ function parseDurationString(str) {
   return null;
 }
 
-async function applyPunishment(guildId, channelId, userId, username, ruleKey, reason, env) {
+// ============================================
+// PUNISHMENT TIERS
+// ============================================
+const TIER_ORDER = { warn: 1, mute: 2, ban: 3 };
+
+function formatDuration(ms) {
+  const days = Math.round(ms / (24 * 60 * 60 * 1000));
+  const hours = Math.round(ms / (60 * 60 * 1000));
+  if (days >= 1) return `${days} day${days > 1 ? 's' : ''}`;
+  if (hours >= 1) return `${hours} hour${hours > 1 ? 's' : ''}`;
+  return `${Math.round(ms / 60000)} min`;
+}
+
+function punishmentTierOf(type) {
+  if (type === 'warn') return 'warn';
+  if (type === 'mute') return 'mute';
+  return 'ban';
+}
+
+function getPunishmentTier(roleIds) {
+  if (roleIds.some(r => MUTE_EXEMPT_ROLES.includes(r))) return 'warn';
+  if (roleIds.some(r => BAN_EXEMPT_ROLES.includes(r))) return 'mute';
+  return 'ban';
+}
+
+function capPunishment(punishment, maxTier) {
+  if (TIER_ORDER[punishmentTierOf(punishment.type)] <= TIER_ORDER[maxTier]) {
+    return punishment;
+  }
+  if (maxTier === 'mute') {
+    const duration = punishment.type === 'ban_and_mute'
+      ? punishment.muteDuration
+      : (punishment.duration || 28 * 24 * 60 * 60 * 1000);
+    return { type: 'mute', duration, label: `Mute (${formatDuration(duration)})` };
+  }
+  return { type: 'warn', label: 'Warning' };
+}
+
+async function applyPunishment(guildId, channelId, userId, username, ruleKey, reason, env, roleIds = []) {
   const kvKey = `offense:${userId}:${ruleKey}`;
   let count = 0;
   try {
@@ -371,7 +442,7 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
   }
 
   const punishmentIndex = Math.min(count - 1, ladder.length - 1);
-  const punishment = ladder[punishmentIndex];
+  const punishment = capPunishment(ladder[punishmentIndex], getPunishmentTier(roleIds));
 
   let actionLabel = punishment.label;
 
@@ -919,13 +990,12 @@ async function handleMessage(payload, env) {
   const ignoredChannels = await getIgnoredChannels(env);
   if (ignoredChannels.includes(channelId)) return;
 
-  const isStaff = roleIds.some(r => MOD_ROLES.includes(r));
   const isLinkExempt = roleIds.some(r => LINK_EXEMPT_ROLES.includes(r));
 
   // 1. Anti-Spam Check
-  if (!isStaff && checkRapidSpam(userId)) {
+  if (checkRapidSpam(userId)) {
     await deleteMessage(channelId, messageId, env);
-    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, 'flooding_chat', 'Flooding chat (4 consecutive messages)', env);
+    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, 'flooding_chat', 'Flooding chat (4 consecutive messages)', env, roleIds);
     await sendLog(env, { userId, username, channelId, action: actionLabel, rule: 'flooding_chat', reason: 'Flooding chat (4 consecutive messages)', layer: 'Anti-Spam Filter', confidence: 'high', message: content });
     return;
   }
@@ -936,12 +1006,7 @@ async function handleMessage(payload, env) {
     if (isLinkExempt && l1.rule === 'discord_advertising') return;
     await deleteMessage(channelId, messageId, env);
 
-    if (isStaff) {
-      await sendLog(env, { userId, username, channelId, action: 'Deleted (Staff Exempt from Punishment)', rule: l1.rule, reason: l1.reason, layer: 'Layer 1', confidence: l1.confidence, message: content });
-      return;
-    }
-
-    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, l1.rule, l1.reason, env);
+    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, l1.rule, l1.reason, env, roleIds);
     await sendLog(env, { userId, username, channelId, action: actionLabel, rule: l1.rule, reason: l1.reason, layer: 'Layer 1', confidence: l1.confidence, message: content });
     return;
   }
@@ -950,10 +1015,8 @@ async function handleMessage(payload, env) {
   const raid = raidCheck(channelId, content, userId);
   if (raid.flagged) {
     await deleteMessage(channelId, messageId, env);
-    if (!isStaff) {
-      const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, raid.rule, raid.reason, env);
-      await sendLog(env, { userId, username, channelId, action: actionLabel, rule: raid.rule, reason: raid.reason, layer: 'Raid Detection', confidence: raid.confidence, message: content });
-    }
+    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, raid.rule, raid.reason, env, roleIds);
+    await sendLog(env, { userId, username, channelId, action: actionLabel, rule: raid.rule, reason: raid.reason, layer: 'Raid Detection', confidence: raid.confidence, message: content });
     return;
   }
 
@@ -964,12 +1027,7 @@ async function handleMessage(payload, env) {
 
     await deleteMessage(channelId, messageId, env);
 
-    if (isStaff) {
-      await sendLog(env, { userId, username, channelId, action: 'Deleted (Staff Exempt from Punishment)', rule: l2.rule_violation, reason: l2.reason, layer: 'Layer 2 (AI)', confidence: l2.confidence, message: content });
-      return;
-    }
-
-    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, l2.rule_violation, l2.reason, env);
+    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, l2.rule_violation, l2.reason, env, roleIds);
     await sendLog(env, { userId, username, channelId, action: actionLabel, rule: l2.rule_violation, reason: l2.reason, layer: 'Layer 2 (AI)', confidence: l2.confidence, message: content });
   }
 }
