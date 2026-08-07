@@ -797,7 +797,16 @@ async function sendPunishmentDM(userId, type, reason, details = {}, env) {
 
 const STAFF_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 
-async function getStaffMemberIds(guildId, env) {
+// Ticket system — button channel + forum/thread channel for tickets
+const CREATE_TICKET_CHANNEL_ID = '1477032862892163113';
+const TICKET_STAFF_ROLES = [
+  ...MOD_ROLES,
+  '1497316057214484735', // Jr. Mod
+  '1477025528174219476', // Helper
+  '1501217374102229185', // Trial Staff
+];
+
+async function fetchAllGuildMembers(guildId, env) {
   try {
     const all = [];
     let after = '0';
@@ -812,10 +821,28 @@ async function getStaffMemberIds(guildId, env) {
       if (members.length < 1000) break;
       after = members[members.length - 1].user.id;
     }
-    return all.filter(m => (m.roles || []).some(r => MOD_ROLES.includes(r))).map(m => m.user.id);
+    return all;
   } catch (e) {
     return [];
   }
+}
+
+async function getStaffMemberIds(guildId, env) {
+  const all = await fetchAllGuildMembers(guildId, env);
+  return all.filter(m => (m.roles || []).some(r => MOD_ROLES.includes(r))).map(m => m.user.id);
+}
+
+async function getTicketStaffIds(guildId, env) {
+  const all = await fetchAllGuildMembers(guildId, env);
+  const staff = all.filter(m => (m.roles || []).some(r => TICKET_STAFF_ROLES.includes(r)));
+  const rank = (m) => {
+    for (let i = 0; i < TICKET_STAFF_ROLES.length; i++) {
+      if (m.roles.includes(TICKET_STAFF_ROLES[i])) return i;
+    }
+    return TICKET_STAFF_ROLES.length;
+  };
+  staff.sort((a, b) => rank(a) - rank(b));
+  return staff.slice(0, 9).map(m => m.user.id);
 }
 
 async function alertStaff(guildId, alertType, details, env) {
@@ -842,6 +869,103 @@ async function alertStaff(guildId, alertType, details, env) {
     }]
   };
   await Promise.allSettled(staffIds.map(id => sendDM(id, payload, env)));
+}
+
+// ============================================
+// DM SUPPORT TICKETS — button → thread → Group DM
+// ============================================
+async function followUp(interaction, env, payload) {
+  try {
+    await fetch(`https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`, {
+      method: 'PATCH',
+      headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (e) {}
+}
+
+async function handleOpenTicket(interaction, env, ctx) {
+  ctx.waitUntil((async () => {
+    const userId = interaction.member?.user?.id || interaction.user?.id;
+    const username = interaction.member?.user?.username || interaction.user?.username;
+    const guildId = interaction.guild_id || MAIN_GUILD_ID;
+    const forumChannelId = env.TICKET_FORUM_CHANNEL_ID || CREATE_TICKET_CHANNEL_ID;
+
+    try {
+      // Detect channel type (forum vs text)
+      const chanRes = await fetch(`https://discord.com/api/v10/channels/${forumChannelId}`, {
+        headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}` }
+      });
+      const channel = await chanRes.json();
+      const isForum = channel.type === 15;
+
+      const threadName = `🎫 support-${username}`.substring(0, 100);
+      let threadId = null;
+
+      if (isForum) {
+        const t = await fetch(`https://discord.com/api/v10/channels/${forumChannelId}/threads`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: threadName,
+            type: 11,
+            message: { content: `<@${userId}> needs help — staff will reach out in a Group DM.` }
+          })
+        });
+        if (t.ok) threadId = (await t.json()).id;
+      } else {
+        const t = await fetch(`https://discord.com/api/v10/channels/${forumChannelId}/threads`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: threadName, type: 12 })
+        });
+        if (t.ok) {
+          threadId = (await t.json()).id;
+          await sendDiscordMessage(threadId, { content: `<@${userId}> needs help — staff will reach out in a Group DM.` }, env);
+        }
+      }
+
+      if (!threadId) throw new Error('Could not create ticket thread');
+
+      // Group DM: player + staff roster (Owner rank first, cap 10 total recipients)
+      const staffIds = await getTicketStaffIds(guildId, env);
+      const recipients = [...new Set([userId, ...staffIds])].slice(0, 10);
+      let groupDmId = null;
+      try {
+        const dmRes = await fetch('https://discord.com/api/v10/users/@me/channels', {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recipients })
+        });
+        if (dmRes.ok) groupDmId = (await dmRes.json()).id;
+      } catch (e) {}
+
+      if (groupDmId) {
+        await sendDiscordMessage(groupDmId, {
+          embeds: [{
+            title: '🎫 New Support Ticket',
+            description: `<@${userId}> opened a support ticket and needs help.`,
+            color: 0xC8102E,
+            fields: [
+              { name: 'Ticket Thread', value: `https://discord.com/channels/${guildId}/${forumChannelId}/${threadId}`, inline: false },
+              { name: 'Member', value: `<@${userId}> (${username})`, inline: true }
+            ],
+            footer: { text: 'DesiBot Tickets • AstralyxPvP' },
+            timestamp: new Date().toISOString()
+          }]
+        });
+      }
+
+      await followUp(interaction, env, { content: `✅ Ticket opened! <@${userId}> — staff have been notified. Thread: <#${threadId}>` });
+    } catch (e) {
+      await followUp(interaction, env, { content: `❌ Ticket failed: ${e.message}` });
+    }
+  })());
+
+  return jsonResponse({
+    type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
+    data: { flags: 64 }
+  });
 }
 
 async function buildRolePickerEmbed() {
@@ -1244,6 +1368,27 @@ async function handleSlashCommandInner(interaction, env) {
     });
   }
 
+  // NATIVE COMMAND: /ticket-setup
+  if (commandName === 'ticket-setup') {
+    await sendDiscordMessage(CREATE_TICKET_CHANNEL_ID, {
+      embeds: [{
+        title: '🎫 Need Help?',
+        description: 'Click the button below to open a support ticket. Staff (including the Owner) will be pulled into a **Group DM** with you to sort it out.',
+        color: 0xC8102E,
+        footer: { text: 'DesiBot Tickets • AstralyxPvP' }
+      }],
+      components: [{
+        type: 1,
+        components: [{ type: 2, style: 1, label: 'Open Support Ticket', custom_id: 'open_ticket', emoji: { name: '🎫' } }]
+      }]
+    }, env);
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `✅ Ticket button posted in <#${CREATE_TICKET_CHANNEL_ID}>!`, flags: 64 }
+    });
+  }
+
   return jsonResponse({
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: { content: '❓ Unknown command.', flags: 64 }
@@ -1394,6 +1539,9 @@ export default {
         if (customId.startsWith('role_toggle_')) {
           const roleId = customId.replace('role_toggle_', '');
           return await handleRoleToggle(interaction, roleId, env);
+        }
+        if (customId === 'open_ticket') {
+          return await handleOpenTicket(interaction, env, ctx);
         }
       }
 

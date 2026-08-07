@@ -191,6 +191,10 @@ const commands = [
         required: true
       }
     ]
+  },
+  {
+    name: 'ticket-setup',
+    description: 'Post the "Open Support Ticket" button in the ticket channel [Staff only]'
   }
 ];
 
