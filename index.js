@@ -108,6 +108,12 @@ const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.
 const recentMessages = new Map();
 const userSpamTracker = new Map();
 
+// Slur-split memory config — messages are split across multiple sends to evade filters.
+// We keep a short per-channel history in KV, join consecutive messages from the same user,
+// and re-run the filters on the combined text.
+const MSG_MEMORY_MAX = 15;
+const MSG_MEMORY_WINDOW_MS = 60000;
+
 // ============================================
 // RULE & PUNISHMENT LADDER MATRIX
 // ============================================
@@ -557,6 +563,61 @@ function checkRapidSpam(userId) {
     return true;
   }
   return false;
+}
+
+// ============================================
+// SLUR-SPLIT MEMORY (KV) — catch slurs spread across messages
+// ============================================
+async function trackMessage(env, channelId, entry) {
+  const kvKey = `msgmem:${channelId}`;
+  let msgs = [];
+  try {
+    const raw = await env.LAXMI_KV.get(kvKey);
+    if (raw) msgs = JSON.parse(raw);
+  } catch (e) {}
+
+  const now = Date.now();
+  msgs = msgs.filter(m => now - m.timestamp < MSG_MEMORY_WINDOW_MS);
+  msgs.push(entry);
+  if (msgs.length > MSG_MEMORY_MAX) msgs = msgs.slice(-MSG_MEMORY_MAX);
+  await env.LAXMI_KV.put(kvKey, JSON.stringify(msgs));
+  return msgs;
+}
+
+function checkCombinedSlur(joined) {
+  const variants = [
+    joined,
+    joined.replace(/\s+/g, ''),
+    joined.toLowerCase().replace(/[^a-z0-9]/g, ''),
+  ];
+  for (const variant of variants) {
+    const res = layer1Check(variant);
+    if (res.flagged) return res;
+  }
+  return { flagged: false };
+}
+
+function detectSlurSplit(msgs, currentUserId) {
+  let run = [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].userId !== currentUserId) break;
+    run.unshift(msgs[i]);
+  }
+  if (run.length < 2) return null;
+
+  const joined = run.map(m => m.content).join(' ');
+  const check = checkCombinedSlur(joined);
+  return check.flagged ? { run, combined: joined, check } : null;
+}
+
+async function purgeMessagesFromMemory(env, channelId, messageIds) {
+  const kvKey = `msgmem:${channelId}`;
+  try {
+    const raw = await env.LAXMI_KV.get(kvKey);
+    if (!raw) return;
+    const msgs = JSON.parse(raw).filter(m => !messageIds.includes(m.messageId));
+    await env.LAXMI_KV.put(kvKey, JSON.stringify(msgs));
+  } catch (e) {}
 }
 
 async function layer2AICheck(text, env) {
@@ -1034,6 +1095,18 @@ async function handleMessage(payload, env) {
     await deleteMessage(channelId, messageId, env);
     const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, 'flooding_chat', 'Flooding chat (4 consecutive messages)', env, roleIds);
     await sendLog(env, { userId, username, channelId, action: actionLabel, rule: 'flooding_chat', reason: 'Flooding chat (4 consecutive messages)', layer: 'Anti-Spam Filter', confidence: 'high', message: content });
+    return;
+  }
+
+  // 1b. Slur-Split Check (combine consecutive messages from same user in KV memory)
+  const msgs = await trackMessage(env, channelId, { userId, content, messageId, timestamp: Date.now() });
+  const split = detectSlurSplit(msgs, userId);
+  if (split) {
+    const messageIds = split.run.map(m => m.messageId).filter(Boolean);
+    await Promise.allSettled(messageIds.map(id => deleteMessage(channelId, id, env)));
+    await purgeMessagesFromMemory(env, channelId, messageIds);
+    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, split.check.rule, split.check.reason, env, roleIds);
+    await sendLog(env, { userId, username, channelId, action: actionLabel, rule: split.check.rule, reason: split.check.reason, layer: 'Slur-Split Detection', confidence: 'high', message: split.combined });
     return;
   }
 
