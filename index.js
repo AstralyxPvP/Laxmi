@@ -795,6 +795,55 @@ async function sendPunishmentDM(userId, type, reason, details = {}, env) {
   } catch (e) {}
 }
 
+const STAFF_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+
+async function getStaffMemberIds(guildId, env) {
+  try {
+    const all = [];
+    let after = '0';
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members?limit=1000&after=${after}`, {
+        headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}` }
+      });
+      if (!res.ok) break;
+      const members = await res.json();
+      if (!Array.isArray(members) || members.length === 0) break;
+      all.push(...members);
+      if (members.length < 1000) break;
+      after = members[members.length - 1].user.id;
+    }
+    return all.filter(m => (m.roles || []).some(r => MOD_ROLES.includes(r))).map(m => m.user.id);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function alertStaff(guildId, alertType, details, env) {
+  const kvKey = `staff_alert:${alertType}`;
+  try {
+    const last = await env.LAXMI_KV.get(kvKey);
+    if (last && Date.now() - parseInt(last, 10) < STAFF_ALERT_COOLDOWN_MS) return;
+    await env.LAXMI_KV.put(kvKey, Date.now().toString());
+  } catch (e) {}
+
+  const staffIds = await getStaffMemberIds(guildId, env);
+  const payload = {
+    embeds: [{
+      title: `🚨 ${details.title}`,
+      description: details.description,
+      color: 0xE74C3C,
+      fields: [
+        { name: 'Channel', value: `<#${details.channelId}>`, inline: true },
+        { name: 'User', value: `<@${details.userId}> (${details.username})`, inline: true },
+        { name: 'Message', value: '```' + (details.message || '').substring(0, 300) + '```', inline: false }
+      ],
+      footer: { text: 'DesiBot Staff Alert • AstralyxPvP' },
+      timestamp: new Date().toISOString()
+    }]
+  };
+  await Promise.allSettled(staffIds.map(id => sendDM(id, payload, env)));
+}
+
 async function buildRolePickerEmbed() {
   return {
     title: '🔔 Get Notified — Pick Your Roles!',
@@ -1160,6 +1209,7 @@ async function handleMessage(payload, env) {
     await deleteMessage(channelId, messageId, env);
     const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, 'flooding_chat', 'Flooding chat (4 consecutive messages)', env, roleIds);
     await sendLog(env, { userId, username, channelId, action: actionLabel, rule: 'flooding_chat', reason: 'Flooding chat (4 consecutive messages)', layer: 'Anti-Spam Filter', confidence: 'high', message: content });
+    await alertStaff(guildId, 'flood', { title: 'Spam Flood Detected', description: 'A user is flooding the chat at high speed.', channelId, userId, username, message: content }, env);
     return;
   }
 
@@ -1192,6 +1242,7 @@ async function handleMessage(payload, env) {
     await deleteMessage(channelId, messageId, env);
     const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, raid.rule, raid.reason, env, roleIds);
     await sendLog(env, { userId, username, channelId, action: actionLabel, rule: raid.rule, reason: raid.reason, layer: 'Raid Detection', confidence: raid.confidence, message: content });
+    await alertStaff(guildId, 'raid', { title: 'Raid In Progress', description: 'Identical messages detected from multiple users.', channelId, userId, username, message: content }, env);
     return;
   }
 
