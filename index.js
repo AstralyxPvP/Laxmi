@@ -467,16 +467,20 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
   try {
     if (punishment.type === 'warn') {
       await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await sendPunishmentDM(userId, 'warn', `${reason} (Offense #${count})`, { count }, env);
     } else if (punishment.type === 'mute') {
       await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await sendPunishmentDM(userId, 'mute', `${reason} (Offense #${count})`, { label: punishment.label }, env);
     } else if (punishment.type === 'ban') {
       await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await sendPunishmentDM(userId, 'ban', `${reason} (Offense #${count})`, { label: punishment.label }, env);
     } else if (punishment.type === 'ban_and_mute') {
       await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await sendPunishmentDM(userId, 'ban', `${reason} (Offense #${count})`, { label: punishment.label }, env);
     }
   } catch (e) {
     actionLabel = `${punishment.label} (FAILED)`;
@@ -727,6 +731,67 @@ async function sendDM(userId, payload, env) {
     const dmChannelId = await getDMChannelId(userId, env);
     if (!dmChannelId) return;
     await sendDiscordMessage(dmChannelId, payload, env);
+  } catch (e) {}
+}
+
+const REJOIN_LINK = 'https://discord.gg/u8BFrpRwEg';
+
+function punishmentDM(type, reason, details = {}) {
+  const { duration, label, count } = details;
+  const base = {
+    footer: { text: 'DesiBot Automod • AstralyxPvP' },
+    timestamp: new Date().toISOString(),
+    color: type === 'warn' ? 0xFEE75C : type === 'mute' ? 0xF1C40F : 0xE74C3C,
+  };
+
+  if (type === 'warn') {
+    return {
+      embeds: [{
+        ...base,
+        title: '⚠️ Warning Issued',
+        description: `You've received a **warning** in AstralyxPvP.`,
+        fields: [
+          { name: 'Reason', value: reason, inline: false },
+          ...(count ? [{ name: 'Offense Count', value: String(count), inline: true }] : []),
+          { name: 'Next Step', value: 'Keep it clean — repeated violations lead to mutes and bans.', inline: false }
+        ]
+      }]
+    };
+  }
+
+  if (type === 'mute') {
+    return {
+      embeds: [{
+        ...base,
+        title: '🔇 You Have Been Muted',
+        description: `You've been muted in **AstralyxPvP**.`,
+        fields: [
+          { name: 'Duration', value: label || 'See reason', inline: true },
+          { name: 'Reason', value: reason, inline: false },
+          { name: 'Next Step', value: 'Wait out the mute and re-read the rules before chatting again.', inline: false }
+        ]
+      }]
+    };
+  }
+
+  return {
+    embeds: [{
+      ...base,
+      title: '🔨 You Have Been Banned',
+      description: `You've been banned from **AstralyxPvP**.`,
+      fields: [
+        { name: 'Duration', value: label || 'Permanent', inline: true },
+        { name: 'Reason', value: reason, inline: false },
+        { name: 'Rejoin', value: `You can rejoin after the ban period expires: ${REJOIN_LINK}`, inline: false },
+        { name: 'Appeal', value: 'If you believe this was a mistake, contact a staff member after rejoining.', inline: false }
+      ]
+    }]
+  };
+}
+
+async function sendPunishmentDM(userId, type, reason, details = {}, env) {
+  try {
+    await sendDM(userId, punishmentDM(type, reason, details), env);
   } catch (e) {}
 }
 
