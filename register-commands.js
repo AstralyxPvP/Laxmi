@@ -179,6 +179,18 @@ const commands = [
         required: true
       }
     ]
+  },
+  {
+    name: 'clearchat',
+    description: 'Delete the last N messages in this channel [Staff only]',
+    options: [
+      {
+        name: 'number',
+        description: 'How many messages to delete (max 100)',
+        type: 4, // INTEGER
+        required: true
+      }
+    ]
   }
 ];
 

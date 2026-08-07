@@ -1183,6 +1183,67 @@ async function handleSlashCommandInner(interaction, env) {
     });
   }
 
+  // NATIVE COMMAND: /clearchat
+  if (commandName === 'clearchat') {
+    const count = Math.min(Math.max(parseInt(interaction.data.options?.[0]?.value, 10) || 0, 1), 100);
+    const channelId = interaction.channel_id;
+
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages?limit=${count}`, {
+      headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}` }
+    });
+    if (!res.ok) {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: `❌ Failed to fetch messages (${res.status}).`, flags: 64 }
+      });
+    }
+    const messages = await res.json();
+    const ids = (Array.isArray(messages) ? messages : []).map(m => m.id);
+
+    if (ids.length === 0) {
+      return jsonResponse({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: '✅ Nothing to delete — channel is already clean.', flags: 64 }
+      });
+    }
+
+    // Bulk delete (works for messages < 14 days old)
+    let deleted = 0;
+    if (ids.length === 1) {
+      await deleteMessage(channelId, ids[0], env);
+      deleted = 1;
+    } else {
+      const bulk = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/bulk-delete`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: ids })
+      });
+      if (bulk.ok) deleted = ids.length;
+      else {
+        // Fall back to individual deletion
+        await Promise.allSettled(ids.map(id => deleteMessage(channelId, id, env)));
+        deleted = ids.length;
+      }
+    }
+
+    await sendLog(env, {
+      userId: interaction.member?.user?.id,
+      username: staffUsername,
+      channelId,
+      action: `Cleared ${deleted} messages`,
+      rule: 'Manual Staff Purge',
+      reason: `Cleared ${count} requested messages`,
+      layer: 'Staff Command (/clearchat)',
+      confidence: 'high',
+      message: `Issued by ${staffUsername}`
+    });
+
+    return jsonResponse({
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `🧹 Deleted **${deleted}** message${deleted === 1 ? '' : 's'} in <#${channelId}>.`, flags: 64 }
+    });
+  }
+
   return jsonResponse({
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: { content: '❓ Unknown command.', flags: 64 }
