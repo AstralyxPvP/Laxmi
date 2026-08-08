@@ -118,15 +118,22 @@ const MSG_MEMORY_WINDOW_MS = 60000;
 // RULE & PUNISHMENT LADDER MATRIX
 // ============================================
 const RULE_OPTIONS = [
-  'swearing_at_players', 'discord_advertising', 'light_advertising',
+  'hacked_clients', 'swearing_at_players', 'discord_advertising', 'light_advertising',
   'asking_staff_items', 'chat_trolling', 'flooding_chat',
   'inappropriate_behavior', 'discrimination', 'referencing_tragic_events',
-  'discord_server_links', 'threatening_others', 'advertising_social_media',
+  'mute_evading', 'ban_evading', 'teaming_assisting', 'interrupting_1v1',
+  'inappropriate_username', 'inappropriate_skins',
+  'discord_server_links', 'bug_exploiting', 'threatening_others', 'advertising_social_media',
   'disease_disability_swearing', 'general_rudeness', 'doxxing',
   'ddos_threats', 'harassment', 'none'
 ];
 
 const PUNISHMENT_MATRIX = {
+  hacked_clients: [
+    { type: 'ban', duration: 30 * 24 * 60 * 60 * 1000, label: '30 day ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+  ],
   flooding_chat: [
     { type: 'mute', duration: 30 * 60 * 1000, label: '30 minute mute' },
     { type: 'mute', duration: 60 * 60 * 1000, label: '1 hour mute' },
@@ -140,7 +147,7 @@ const PUNISHMENT_MATRIX = {
   discord_advertising: [
     { type: 'mute', duration: 180 * 24 * 60 * 60 * 1000, label: '6 month mute' },
     { type: 'mute', duration: 365 * 24 * 60 * 60 * 1000, label: '12 month mute' },
-    { type: 'ban', duration: null, label: 'Permanent ban' },
+    { type: 'mute', duration: null, label: 'Permanent mute' },
   ],
   light_advertising: [
     { type: 'mute', duration: 12 * 60 * 60 * 1000, label: '12 hour mute' },
@@ -160,7 +167,7 @@ const PUNISHMENT_MATRIX = {
   inappropriate_behavior: [
     { type: 'mute', duration: 14 * 24 * 60 * 60 * 1000, label: '14 day mute' },
     { type: 'mute', duration: 31 * 24 * 60 * 60 * 1000, label: '31 day mute' },
-    { type: 'ban', duration: null, label: 'Permanent ban' },
+    { type: 'mute', duration: null, label: 'Permanent mute' },
   ],
   discrimination: [
     { type: 'mute', duration: 7 * 24 * 60 * 60 * 1000, label: '7 day mute' },
@@ -172,9 +179,42 @@ const PUNISHMENT_MATRIX = {
     { type: 'mute', duration: 7 * 24 * 60 * 60 * 1000, label: '7 day mute' },
     { type: 'ban', duration: 14 * 24 * 60 * 60 * 1000, label: '14 day ban' },
   ],
+  mute_evading: [
+    { type: 'ban', duration: 3 * 24 * 60 * 60 * 1000, label: '3 day ban' },
+    { type: 'ban', duration: 7 * 24 * 60 * 60 * 1000, label: '7 day ban' },
+    { type: 'ban', duration: 14 * 24 * 60 * 60 * 1000, label: '14 day ban' },
+  ],
+  ban_evading: [
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+  ],
+  teaming_assisting: [
+    { type: 'ban', duration: 14 * 24 * 60 * 60 * 1000, label: '14 day ban' },
+    { type: 'ban', duration: 30 * 24 * 60 * 60 * 1000, label: '30 day ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+  ],
+  interrupting_1v1: [
+    { type: 'warn', label: 'Warning' },
+    { type: 'ban', duration: 30 * 60 * 1000, label: '30 minute ban' },
+    { type: 'ban', duration: 2 * 60 * 60 * 1000, label: '2 hour ban' },
+  ],
+  inappropriate_username: [
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+  ],
+  inappropriate_skins: [
+    { type: 'kick_warn', label: 'Warning kick + change skin request' },
+    { type: 'ban', duration: 7 * 24 * 60 * 60 * 1000, label: '7 day ban' },
+    { type: 'ban', duration: 14 * 24 * 60 * 60 * 1000, label: '14 day ban' },
+  ],
   discord_server_links: [
     { type: 'ban_and_mute', banDuration: 7 * 24 * 60 * 60 * 1000, muteDuration: 3 * 24 * 60 * 60 * 1000, label: '7 day ban + 3 day mute' },
     { type: 'ban_and_mute', banDuration: 14 * 24 * 60 * 60 * 1000, muteDuration: 17 * 24 * 60 * 60 * 1000, label: '14 day ban + 17 day mute' },
+    { type: 'ban_and_mute', banDuration: null, muteDuration: null, label: 'Permanent ban + Permanent mute' },
+  ],
+  bug_exploiting: [
+    { type: 'ban', duration: 14 * 24 * 60 * 60 * 1000, label: '14 day ban' },
+    { type: 'ban', duration: 30 * 24 * 60 * 60 * 1000, label: '30 day ban' },
     { type: 'ban', duration: null, label: 'Permanent ban' },
   ],
   threatening_others: [
@@ -332,7 +372,7 @@ async function warnUser(channelId, userId, reason, moderator, env) {
 // Custom Native Mute (Timeout API + Muted Role)
 async function timeoutUser(guildId, userId, durationMs, reason, moderator, env) {
   const maxTimeoutMs = 28 * 24 * 60 * 60 * 1000;
-  const actualDuration = Math.min(durationMs, maxTimeoutMs);
+  const actualDuration = durationMs ? Math.min(durationMs, maxTimeoutMs) : maxTimeoutMs;
   const until = new Date(Date.now() + actualDuration).toISOString();
 
   // Apply Discord Timeout
@@ -382,6 +422,16 @@ async function banUser(guildId, userId, reason, moderator, env, deleteMessageSec
   await logInfraction(userId, 'BAN', reason, moderator, env);
 }
 
+// Custom Native Kick
+async function kickUser(guildId, userId, reason, moderator, env) {
+  await discordApi(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(reason) }
+  }, env);
+
+  await logInfraction(userId, 'KICK', reason, moderator, env);
+}
+
 // Custom Native Unban
 async function unbanUser(guildId, userId, reason, moderator, env) {
   await discordApi(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
@@ -418,7 +468,7 @@ function formatDuration(ms) {
 }
 
 function punishmentTierOf(type) {
-  if (type === 'warn') return 'warn';
+  if (type === 'warn' || type === 'kick_warn') return 'warn';
   if (type === 'mute') return 'mute';
   return 'ban';
 }
@@ -435,7 +485,7 @@ function capPunishment(punishment, maxTier) {
   }
   if (maxTier === 'mute') {
     const duration = punishment.type === 'ban_and_mute'
-      ? punishment.muteDuration
+      ? (punishment.muteDuration || 28 * 24 * 60 * 60 * 1000)
       : (punishment.duration || 28 * 24 * 60 * 60 * 1000);
     return { type: 'mute', duration, label: `Mute (${formatDuration(duration)})` };
   }
@@ -468,6 +518,10 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
     if (punishment.type === 'warn') {
       await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await sendPunishmentDM(userId, 'warn', `${reason} (Offense #${count})`, { count }, env);
+    } else if (punishment.type === 'kick_warn') {
+      await warnUser(channelId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
+      await sendPunishmentDM(userId, 'warn', `Please change your skin and re-read the rules: ${reason} (Offense #${count})`, { count }, env);
+      await kickUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
     } else if (punishment.type === 'mute') {
       await timeoutUser(guildId, userId, punishment.duration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
@@ -629,6 +683,7 @@ async function layer2AICheck(text, env) {
 Categorize incoming user messages strictly into one of the following rule violation keys:
 
 OPTIONS:
+- hacked_clients (Admitting to or promoting hacked clients, cheats, or unfair advantages)
 - swearing_at_players (Swearing/insulting other players)
 - discord_advertising (Posting invite links to other Discord servers)
 - light_advertising (Mentioning/telling other Minecraft server names)
@@ -638,7 +693,14 @@ OPTIONS:
 - inappropriate_behavior (NSFW, sexually explicit, or inappropriate conduct)
 - discrimination (Racism, homophobia, bigotry, or discrimination)
 - referencing_tragic_events (Referencing tragedies, disasters, or mass violence)
+- mute_evading (Admitting to or arranging mute evasions on alternate accounts)
+- ban_evading (Admitting to or arranging ban evasions on alternate accounts)
+- teaming_assisting (Teaming with or assisting hackers/rule breakers)
+- interrupting_1v1 (Interrupting or interfering with an ongoing 1v1 fight)
+- inappropriate_username (Inappropriate or offensive username/display name)
+- inappropriate_skins (Inappropriate or offensive skins or avatars)
 - discord_server_links (Posting non-Astralyx Discord links)
+- bug_exploiting (Exploiting server bugs, glitches, or abusing exploits)
 - threatening_others (Threats of real-life harm or physical violence)
 - advertising_social_media (Advertising personal YouTube, Twitch, TikTok, etc.)
 - disease_disability_swearing (Using diseases or disabilities as insults)
