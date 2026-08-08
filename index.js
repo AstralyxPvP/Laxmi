@@ -104,6 +104,9 @@ const HINGLISH_BANNED = [
 
 const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.com\/invite\/[a-zA-Z0-9]+/i;
 
+// AstralyxPvP's own invite links — allowed under rule 17 (only OTHER server links are punishable)
+const ASTRALYX_INVITE_CODES = ['u8bfrprweg'];
+
 // In-memory trackers
 const recentMessages = new Map();
 const userSpamTracker = new Map();
@@ -584,8 +587,12 @@ function layer1Check(text) {
     }
   }
 
-  if (AD_PATTERN.test(text)) {
-    return { flagged: true, rule: 'discord_advertising', reason: 'Discord server advertising link detected', confidence: 'high' };
+  const inviteMatch = text.match(AD_PATTERN);
+  if (inviteMatch) {
+    const code = (inviteMatch[0].split('/').pop() || '').toLowerCase();
+    if (!ASTRALYX_INVITE_CODES.includes(code)) {
+      return { flagged: true, rule: 'discord_server_links', reason: 'Non-AstralyxPvP Discord server link detected', confidence: 'high' };
+    }
   }
 
   return { flagged: false };
@@ -699,7 +706,7 @@ OPTIONS:
 - interrupting_1v1 (Interrupting or interfering with an ongoing 1v1 fight)
 - inappropriate_username (Inappropriate or offensive username/display name)
 - inappropriate_skins (Inappropriate or offensive skins or avatars)
-- discord_server_links (Posting non-Astralyx Discord links)
+- discord_server_links (Posting non-Astralyx Discord links; AstralyxPvP's own invite discord.gg/u8BFrpRwEg is ALLOWED)
 - bug_exploiting (Exploiting server bugs, glitches, or abusing exploits)
 - threatening_others (Threats of real-life harm or physical violence)
 - advertising_social_media (Advertising personal YouTube, Twitch, TikTok, etc.)
@@ -1496,7 +1503,7 @@ async function handleMessage(payload, env) {
   // 2. Layer 1 Check (Regex / Obscenity / Ads)
   const l1 = layer1Check(content);
   if (l1.flagged) {
-    if (isLinkExempt && l1.rule === 'discord_advertising') return;
+    if (isLinkExempt && (l1.rule === 'discord_advertising' || l1.rule === 'discord_server_links')) return;
     await deleteMessage(channelId, messageId, env);
 
     const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, l1.rule, l1.reason, env, roleIds);
