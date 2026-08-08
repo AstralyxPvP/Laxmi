@@ -530,14 +530,14 @@ async function applyPunishment(guildId, channelId, userId, username, ruleKey, re
       await warnUser(channelId, userId, `Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await sendPunishmentDM(userId, 'mute', `${reason} (Offense #${count})`, { label: punishment.label }, env);
     } else if (punishment.type === 'ban') {
+      await sendPunishmentDM(userId, 'ban', `${reason} (Offense #${count})`, { label: punishment.label }, env);
       await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await warnUser(channelId, userId, `Banned: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
-      await sendPunishmentDM(userId, 'ban', `${reason} (Offense #${count})`, { label: punishment.label }, env);
     } else if (punishment.type === 'ban_and_mute') {
+      await sendPunishmentDM(userId, 'ban', `${reason} (Offense #${count})`, { label: punishment.label }, env);
       await timeoutUser(guildId, userId, punishment.muteDuration, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await banUser(guildId, userId, `${reason} (Offense #${count})`, 'DesiBot Automod', env);
       await warnUser(channelId, userId, `Banned & Muted: ${punishment.label} for ${reason} (Offense #${count})`, 'DesiBot Automod', env);
-      await sendPunishmentDM(userId, 'ban', `${reason} (Offense #${count})`, { label: punishment.label }, env);
     }
   } catch (e) {
     actionLabel = `${punishment.label} (FAILED)`;
