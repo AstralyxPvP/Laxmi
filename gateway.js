@@ -78,6 +78,24 @@ client.on('guildMemberAdd', async (member) => {
   });
 });
 
+// New channel created (used to detect TicketTool ticket-XXXX channels)
+client.on('channelCreate', async (channel) => {
+  try {
+    // Only real text channels in a category — skip threads, forum posts, voice, etc.
+    if (channel.type !== 0 || !channel.parentId) return;
+    await sendToWorker({
+      type: 'channel_create',
+      channelId: channel.id,
+      name: channel.name,
+      parentId: channel.parentId,
+      topic: channel.topic || '',
+      guildId: channel.guildId || channel.guild?.id
+    });
+  } catch (e) {
+    console.error('❌ channelCreate forward failed:', e.message);
+  }
+});
+
 // Message moderation
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
@@ -90,7 +108,8 @@ client.on('messageCreate', async (message) => {
     userId: message.author.id,
     username: message.member?.displayName || message.author.username,
     roleIds: message.member?.roles.cache.map(r => r.id) || [],
-    guildId: message.guildId
+    guildId: message.guildId,
+    parentId: message.channel.parentId
   });
 });
 
