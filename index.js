@@ -6,6 +6,7 @@
 
 import { verifyKey, InteractionType, InteractionResponseType } from 'discord-interactions';
 import {
+  DataSet,
   RegExpMatcher,
   englishDataset,
   englishRecommendedTransformers,
@@ -89,8 +90,22 @@ const DEFAULT_IGNORED_CHANNELS = [
 // ============================================
 // OBSCENITY & PATTERNS
 // ============================================
+// Obscenity dataset with whitelisted false positives (e.g., 'duck' mapped as 'dick' in leetspeak transformers)
+const customObscenityDataset = new DataSet().addAll(englishDataset);
+const WHITELISTED_FALSE_POSITIVES = [
+  'duck', 'ducks', 'ducking', 'grass', 'pass', 'bass', 'glass', 'class', 'mass', 'brass',
+  'butter', 'shitzu', 'snicker', 'snickers', 'cocktail', 'peacock', 'tit', 'penistone',
+  'dickens', 'scunthorpe', 'hell', 'hello', 'shell', 'sheet', 'ship', 'shot', 'beach', 'bitchin'
+];
+customObscenityDataset.addPhrase(phrase => {
+  for (const word of WHITELISTED_FALSE_POSITIVES) {
+    phrase.addWhitelistedTerm(word);
+  }
+  return phrase;
+});
+
 const profanityMatcher = new RegExpMatcher({
-  ...englishDataset.build(),
+  ...customObscenityDataset.build(),
   ...englishRecommendedTransformers,
 });
 
@@ -576,17 +591,36 @@ async function sendLog(env, logEntry) {
 // AUTOMOD DETECTION LAYERS
 // ============================================
 function layer1Check(text) {
+  // 1. Primary profanity check with whitelisted common false positives (e.g. duck, glass, snicker)
   if (profanityMatcher.hasMatch(text)) {
     return { flagged: true, rule: 'swearing_at_players', reason: 'Profanity detected', confidence: 'high' };
   }
 
-  const cleanText = text.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+  // Also check collapsed spaces (e.g. 'f u c k' or 'n i g g e r')
+  const unspaced = text.replace(/[\s\-_.]+/g, '');
+  if (unspaced.length > 3 && profanityMatcher.hasMatch(unspaced)) {
+    return { flagged: true, rule: 'swearing_at_players', reason: 'Obfuscated profanity detected', confidence: 'high' };
+  }
+
+  // 2. Hinglish banned word check with boundary awareness to prevent false-positives
+  // like 'brandi' matching 'randi'
+  const cleanWithSpaces = ` ${text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')} `;
+  const compactText = text.toLowerCase().replace(/[^a-z0-9]/g, '');
+
   for (const word of HINGLISH_BANNED) {
-    if (cleanText.includes(word)) {
-      return { flagged: true, rule: 'swearing_at_players', reason: `Banned word detected: "${word}"`, confidence: 'high' };
+    if (word.includes(' ')) {
+      const compactWord = word.replace(/\s+/g, '');
+      if (cleanWithSpaces.includes(` ${word} `) || compactText.includes(compactWord)) {
+        return { flagged: true, rule: 'swearing_at_players', reason: `Banned word detected: "${word}"`, confidence: 'high' };
+      }
+    } else {
+      if (cleanWithSpaces.includes(` ${word} `)) {
+        return { flagged: true, rule: 'swearing_at_players', reason: `Banned word detected: "${word}"`, confidence: 'high' };
+      }
     }
   }
 
+  // 3. Discord invite links
   const inviteMatch = text.match(AD_PATTERN);
   if (inviteMatch) {
     const code = (inviteMatch[0].split('/').pop() || '').toLowerCase();
