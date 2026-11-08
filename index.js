@@ -747,7 +747,7 @@ Categorize incoming user messages strictly into one of the following rule violat
 
 OPTIONS:
 - hacked_clients (Admitting to or promoting hacked clients, cheats, or unfair advantages)
-- swearing_at_players (Swearing/insulting other players)
+- swearing_at_players (Swearing at, cursing at, or verbally abusing other players)
 - discord_advertising (Posting invite links to other Discord servers)
 - light_advertising (Mentioning/telling other Minecraft server names)
 - asking_staff_items (Begging or asking staff for free items/ranks)
@@ -767,13 +767,24 @@ OPTIONS:
 - threatening_others (Threats of real-life harm or physical violence)
 - advertising_social_media (Advertising personal YouTube, Twitch, TikTok, etc.)
 - disease_disability_swearing (Using diseases or disabilities as insults)
-- general_rudeness (General toxicity, rude behavior, or disrespect)
+- general_rudeness (Targeted toxicity, insulting a player's skill or person like "you're a lucker and you suck", toxic belittling, or disrespect)
 - doxxing (Sharing private personal real-life information of users)
 - ddos_threats (Threatening IP attacks, booter services, or DDoS)
-- harassment (Harassment or sexual harassment)
-- none (Message is clean and adheres to rules)
+- harassment (Harassment, bullying, or persistent targeted toxicity)
+- none (Message is clean, casual banter, or adheres to rules)
 
-Do NOT flag: mild frustration, casual gaming banter, or "mc"/"bc" when clearly meaning Minecraft/because in context.
+CONTEXT-AWARE EVALUATION GUIDELINES:
+1. Distinguish harmless context vs toxic insults:
+   - Clean / Friendly: "bro has luck on his side thats why he won", "gg that was lucky", "what the duck", "i suck at this game" -> rule_violation: "none"
+   - Toxic / Rude: "bro is a lucker and he sucks", "you're trash and you suck", "lucker noob get a life" -> rule_violation: "general_rudeness" or "swearing_at_players", flagged: true, confidence: "high"
+2. Do NOT flag:
+   - Mild self-deprecation (e.g. "i suck at pvp")
+   - Friendly game discussion about luck, RNG, or mechanics
+   - Abbreviations like "mc" (Minecraft) or "bc" (because) when used innocently
+3. Flag:
+   - Calling someone a "lucker" in a derogatory/insulting way combined with insults ("he sucks", "you suck")
+   - Targeted toxicity, hostility, and offensive slurs
+
 Return ONLY valid JSON matching the requested schema.`;
 
   const userContent = `Evaluate message: "${text}"`;
