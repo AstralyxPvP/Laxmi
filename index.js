@@ -115,7 +115,15 @@ const customObscenityDataset = new DataSet().addAll(englishDataset);
 const WHITELISTED_FALSE_POSITIVES = [
   'duck', 'ducks', 'ducking', 'grass', 'pass', 'bass', 'glass', 'class', 'mass', 'brass',
   'butter', 'shitzu', 'snicker', 'snickers', 'cocktail', 'peacock', 'tit', 'penistone',
-  'dickens', 'scunthorpe', 'hell', 'hello', 'shell', 'sheet', 'ship', 'shot', 'beach', 'bitchin'
+  'dickens', 'scunthorpe', 'hell', 'hello', 'shell', 'sheet', 'ship', 'shot', 'beach', 'bitchin',
+  // Common innocent words that contain profanity substrings.
+  'cockpit', 'cockpits', 'cockerel', 'cockerels', 'shuttlecock', 'shuttlecocks',
+  'gamecock', 'gamecocks', 'woodcock', 'woodcocks', 'cockatoo', 'cockatoos', 'cockle', 'cockles',
+  'assess', 'assessed', 'assessing', 'assessment', 'assessments', 'assessor', 'assessors',
+  'cumin', 'cumins', 'cummerbund', 'cummerbunds',
+  'pussycat', 'pussycats',
+  'shiitake', 'shiitakes', 'shitake', 'shitakes',
+  'fukuoka', 'fukushima', 'fukui', 'fukuyama'
 ];
 customObscenityDataset.addPhrase(phrase => {
   for (const word of WHITELISTED_FALSE_POSITIVES) {
@@ -124,18 +132,44 @@ customObscenityDataset.addPhrase(phrase => {
   return phrase;
 });
 
+// Used only by the split-slur prefilter so common whitelisted words never
+// trigger the expensive subset search.
+const WHITELIST_REGEX = new RegExp(
+  `\\b(?:${WHITELISTED_FALSE_POSITIVES
+    .slice()
+    .sort((a, b) => b.length - a.length)
+    .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')})\\b`,
+  'gi',
+);
+
 const profanityMatcher = new RegExpMatcher({
   ...customObscenityDataset.build(),
   ...englishRecommendedTransformers,
 });
 
 const HINGLISH_BANNED = [
-  'madarchod', 'maderchod', 'maa ki', 'maaki', 'teri maa', 'behenchod', 'behen chod',
-  'behnchod', 'bahenchod', 'chutiya', 'chutiye', 'choot', 'chutmarike', 'bhosdike',
-  'bhosd', 'bhosdi', 'bhosdiwale', 'gandu', 'gaandu', 'harami', 'randi', 'bsdk',
+  'madarchod', 'maderchod', 'madrchod', 'maa ki', 'maaki', 'teri maa', 'behenchod', 'behen chod',
+  'behnchod', 'bhenchod', 'bhen chod', 'benchod', 'bahenchod', 'bhenchode', 'chutiya', 'chutiye',
+  'chutya', 'choot', 'chutmarike', 'bhosdike', 'bhosd', 'bhosdi', 'bhosdiwale', 'bhosadike',
+  'gandu', 'gaandu', 'harami', 'haramkhor', 'haramzada', 'haramzade', 'randi', 'bsdk',
   'lodu', 'lund', 'lauda', 'lavda', 'loda', 'lawde', 'lavde', 'chakka', 'hijra',
-  'jhant', 'chinaal'
+  'jhant', 'jhaant', 'chinal', 'chinaal'
 ];
+
+// Cheap prefilter for the split-slur subset search. The obscenity matcher is
+// thorough but too expensive to run over every possible message subset, so
+// only combinations that could contain one of these roots reach it.
+const SPLIT_TARGETS = [
+  ...englishDataset.containers
+    .map(container => container.metadata?.originalWord)
+    .filter(Boolean),
+  ...HINGLISH_BANNED,
+]
+  .map(word => word.toLowerCase().replace(/[^a-z0-9]/g, ''))
+  .filter(word => word.length >= 2);
+const SPLIT_TARGET_LIST = [...new Set(SPLIT_TARGETS)];
+const SPLIT_TARGET_REGEX = new RegExp(`(?:${SPLIT_TARGET_LIST.join('|')})`, 'i');
 
 const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.com\/invite\/[a-zA-Z0-9]+/i;
 
@@ -703,48 +737,187 @@ async function trackMessage(env, channelId, entry) {
   return msgs;
 }
 
-function checkCombinedSlur(joined) {
-  const variants = [
-    joined,
-    joined.replace(/\s+/g, ''),
-    joined.toLowerCase().replace(/[^a-z0-9]/g, ''),
-  ];
-  for (const variant of variants) {
-    const res = layer1Check(variant);
-    if (res.flagged) return res;
+function checkCombinedSlur(...texts) {
+  for (const text of texts) {
+    if (!text) continue;
+    const variants = [
+      text,
+      text.replace(/\s+/g, ''),
+      text.toLowerCase().replace(/[^a-z0-9]/g, ''),
+    ];
+    for (const variant of variants) {
+      const res = layer1Check(variant);
+      if (res.flagged) return res;
+    }
   }
   return { flagged: false };
 }
 
+function splitTokens(content) {
+  return String(content || '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+const LEET_MAP = {
+  0: 'o', 1: 'i', 2: 'z', 3: 'e', 4: 'a', 5: 's', 6: 'g', 7: 't', 8: 'b', 9: 'g',
+  '@': 'a', '$': 's', '!': 'i',
+};
+
+function normalizeForSplit(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[0-9@$!]/g, character => LEET_MAP[character] || character)
+    .replace(/[^a-z]/g, '');
+}
+
+function containsSplitTarget(value) {
+  if (!value || value.length < 2) return false;
+  if (SPLIT_TARGET_REGEX.test(value)) return true;
+  const collapsed = value.replace(/(.)\1+/g, '$1');
+  return collapsed !== value && SPLIT_TARGET_REGEX.test(collapsed);
+}
+
+// Returns true only when a banned root spans two pieces. A root that is wholly
+// inside one piece is not a split slur - normal layer-1 processing already
+// handles it. This is what prevents false positives from innocent words like
+// "grape" (contains "rape") or "assist" (contains "ass").
+function containsCrossBoundaryTarget(pieces) {
+  if (!Array.isArray(pieces) || pieces.length < 2) return false;
+  const joined = pieces.join('');
+  if (!SPLIT_TARGET_REGEX.test(joined)) return false;
+
+  const boundaries = [];
+  let offset = 0;
+  for (let index = 0; index < pieces.length - 1; index += 1) {
+    offset += pieces[index].length;
+    if (offset > 0) boundaries.push(offset);
+  }
+  if (!boundaries.length) return false;
+
+  for (const target of SPLIT_TARGET_LIST) {
+    let position = joined.indexOf(target);
+    while (position !== -1) {
+      const end = position + target.length;
+      if (boundaries.some(boundary => position < boundary && boundary < end)) {
+        return true;
+      }
+      position = joined.indexOf(target, position + 1);
+    }
+  }
+  return false;
+}
+
+function splitPiecesFromContent(content) {
+  const cleaned = String(content || '').replace(WHITELIST_REGEX, ' ');
+  return splitTokens(cleaned)
+    .map(token => normalizeForSplit(token))
+    .filter(piece => piece.length >= 1 && piece.length <= 5);
+}
+
+function combinations(count, size) {
+  const out = [];
+  const current = [];
+  const walk = (start) => {
+    if (current.length === size) {
+      out.push([...current]);
+      return;
+    }
+    for (let i = start; i < count; i += 1) {
+      current.push(i);
+      walk(i + 1);
+      current.pop();
+    }
+  };
+  walk(0);
+  return out;
+}
+
 function detectSlurSplit(msgs, currentUserId) {
-  // Collect all recent messages by this user within the channel's memory
+  // Collect all recent messages by this user within the channel's memory.
+  // Messages from other users are ignored entirely, so interleaving does not
+  // break the detection window.
   const userMsgs = msgs.filter(m => m.userId === currentUserId);
   if (userMsgs.length < 2) return null;
 
-  // We look for the smallest subset of the user's trailing messages that forms a violation,
-  // ending with the latest message.
-  // This ensures:
-  // 1. Interleaving messages from other users do NOT prevent catching a split slur.
-  // 2. Only the messages contributing to the split violation are targeted/deleted,
-  //    not innocent previous messages like "hi" or "nice to meet you".
+  // If the latest message alone is already flagged, let normal message
+  // processing handle it. This avoids deleting earlier benign messages.
   const latestMsg = userMsgs[userMsgs.length - 1];
+  const latestNormalized = normalizeForSplit(String(latestMsg.content || '').replace(WHITELIST_REGEX, ' '));
+  if (latestNormalized && containsSplitTarget(latestNormalized)
+      && checkCombinedSlur(latestMsg.content).flagged) {
+    return null;
+  }
 
-  // Check window slices of length 2 up to userMsgs.length (capped at last 5 messages)
-  const maxLookback = Math.min(userMsgs.length, 5);
-  for (let len = 2; len <= maxLookback; len++) {
-    const candidateSlice = userMsgs.slice(-len);
+  // Only short pieces can realistically be parts of a split slur. Whole
+  // innocent words such as "cockpit", "analysis" or "document" are excluded,
+  // which prevents accidental cross-message profanity matches.
+  const pool = userMsgs.slice(-8);
+  const candidates = pool
+    .map(message => ({ message, pieces: splitPiecesFromContent(message.content) }))
+    .filter(candidate => candidate.pieces.length > 0);
+  if (candidates.length < 2) return null;
 
-    // If the latest message alone is already flagged by layer1, let standard message processing handle it
-    // so we don't unnecessarily delete earlier benign messages.
-    const latestAlone = checkCombinedSlur(latestMsg.content);
-    if (latestAlone.flagged) {
-      return null;
+  // The latest user message must itself contain a piece; otherwise an older
+  // split is being re-evaluated and the newest message is innocent.
+  const latestCandidate = candidates[candidates.length - 1];
+  if (latestCandidate.message !== latestMsg) return null;
+  const lastIndex = candidates.length - 1;
+
+  // Cheap prefilter: only combinations with a banned root crossing a piece
+  // boundary can possibly be a split slur.
+  const allPieces = candidates.flatMap(candidate => candidate.pieces);
+  const shortPieces = allPieces.filter(piece => piece.length <= 2);
+  const headPieces = candidates.map(candidate => candidate.pieces[0]);
+  const tailPieces = candidates.map(candidate => candidate.pieces[candidate.pieces.length - 1]);
+  if (![allPieces, shortPieces, headPieces, tailPieces].some(containsCrossBoundaryTarget)) {
+    return null;
+  }
+
+  for (let size = 2; size <= candidates.length; size += 1) {
+    let best = null;
+    // Reverse lexicographic order prefers the most recent messages when two
+    // subsets are equally small.
+    for (const combo of combinations(candidates.length, size).reverse()) {
+      if (!combo.includes(lastIndex)) continue;
+
+      const run = combo.map(index => candidates[index]);
+      const joinedPieces = run.flatMap(candidate => candidate.pieces);
+      const heads = run.map(candidate => candidate.pieces[0]);
+      const tails = run.map(candidate => candidate.pieces[candidate.pieces.length - 1]);
+      if (![joinedPieces, heads, tails].some(containsCrossBoundaryTarget)) continue;
+
+      // The latest message must be necessary for the violation. If the older
+      // messages already form one, this is a stale split and the newest message
+      // is innocent, so do not delete it.
+      const prior = run.slice(0, -1);
+      if (prior.length >= 2) {
+        const priorPieces = prior.flatMap(candidate => candidate.pieces);
+        const priorHeads = prior.map(candidate => candidate.pieces[0]);
+        const priorTails = prior.map(candidate => candidate.pieces[candidate.pieces.length - 1]);
+        if ([priorPieces, priorHeads, priorTails].some(containsCrossBoundaryTarget)) {
+          const priorCheck = checkCombinedSlur(
+            priorPieces.join(' '),
+            priorHeads.join(' '),
+            priorTails.join(' '),
+          );
+          if (priorCheck.flagged) continue;
+        }
+      }
+
+      const joined = joinedPieces.join(' ');
+      const check = checkCombinedSlur(joined, heads.join(' '), tails.join(' '));
+      if (!check.flagged) continue;
+
+      const weight = joined.length;
+      if (!best || weight < best.weight || (weight === best.weight && combo[0] > best.combo[0])) {
+        best = { run: run.map(candidate => candidate.message), combined: joined, check, weight, combo };
+      }
     }
-
-    const joined = candidateSlice.map(m => m.content).join(' ');
-    const check = checkCombinedSlur(joined);
-    if (check.flagged) {
-      return { run: candidateSlice, combined: joined, check };
+    if (best) {
+      return { run: best.run, combined: best.combined, check: best.check };
     }
   }
 
