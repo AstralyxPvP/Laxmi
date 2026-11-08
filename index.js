@@ -663,16 +663,38 @@ function checkCombinedSlur(joined) {
 }
 
 function detectSlurSplit(msgs, currentUserId) {
-  let run = [];
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].userId !== currentUserId) break;
-    run.unshift(msgs[i]);
-  }
-  if (run.length < 2) return null;
+  // Collect all recent messages by this user within the channel's memory
+  const userMsgs = msgs.filter(m => m.userId === currentUserId);
+  if (userMsgs.length < 2) return null;
 
-  const joined = run.map(m => m.content).join(' ');
-  const check = checkCombinedSlur(joined);
-  return check.flagged ? { run, combined: joined, check } : null;
+  // We look for the smallest subset of the user's trailing messages that forms a violation,
+  // ending with the latest message.
+  // This ensures:
+  // 1. Interleaving messages from other users do NOT prevent catching a split slur.
+  // 2. Only the messages contributing to the split violation are targeted/deleted,
+  //    not innocent previous messages like "hi" or "nice to meet you".
+  const latestMsg = userMsgs[userMsgs.length - 1];
+
+  // Check window slices of length 2 up to userMsgs.length (capped at last 5 messages)
+  const maxLookback = Math.min(userMsgs.length, 5);
+  for (let len = 2; len <= maxLookback; len++) {
+    const candidateSlice = userMsgs.slice(-len);
+
+    // If the latest message alone is already flagged by layer1, let standard message processing handle it
+    // so we don't unnecessarily delete earlier benign messages.
+    const latestAlone = checkCombinedSlur(latestMsg.content);
+    if (latestAlone.flagged) {
+      return null;
+    }
+
+    const joined = candidateSlice.map(m => m.content).join(' ');
+    const check = checkCombinedSlur(joined);
+    if (check.flagged) {
+      return { run: candidateSlice, combined: joined, check };
+    }
+  }
+
+  return null;
 }
 
 async function purgeMessagesFromMemory(env, channelId, messageIds) {
