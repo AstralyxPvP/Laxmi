@@ -27,6 +27,26 @@ const NOTIFICATION_ROLES = [
   { label: '📊 Polls', roleId: '1500206496535937195' },
 ];
 
+// Staff role IDs and names mapped for role-aware moderation
+const STAFF_ROLE_MAP = {
+  '1477025238784151554': 'Owner',
+  '1477291491003994214': 'Co-Owner',
+  '1502815102716608552': 'Chief Manager',
+  '1497335106074050620': 'Sr. Manager',
+  '1483209618485284964': 'Manager',
+  '1498734182615089314': 'Head of General Affairs',
+  '1498734243352678630': 'Head of Internal Affairs',
+  '1529483674817532066': 'Sr. Developer',
+  '1497316294632931358': 'Developer',
+  '1530947152900259930': 'Jr. Developer',
+  '1497316250945323070': 'Admin',
+  '1497316120452136960': 'Sr. Mod',
+  '1477025502119334109': 'Mod',
+  '1497316057214484735': 'Jr. Mod',
+  '1477025528174219476': 'Helper',
+  '1501217374102229185': 'Trial Staff'
+};
+
 // Staff roles exempt from punishments & link rules
 const MOD_ROLES = [
   '1477025238784151554', // Owner
@@ -741,7 +761,13 @@ async function purgeMessagesFromMemory(env, channelId, messageIds) {
   } catch (e) {}
 }
 
-async function layer2AICheck(text, env) {
+async function layer2AICheck(text, env, authorRoles = []) {
+  const staffRoleNames = authorRoles.map(r => STAFF_ROLE_MAP[r]).filter(Boolean);
+  const isVerifiedStaff = staffRoleNames.length > 0;
+  const staffContext = isVerifiedStaff
+    ? `The author of this message is a VERIFIED STAFF MEMBER with role(s): ${staffRoleNames.join(', ')}. They are NOT impersonating staff or trolling when stating their rank or moderating.`
+    : `The author does not hold verified staff roles.`;
+
   const systemPrompt = `You are the moderation AI for AstralyxPvP, an Indian Minecraft Java PvP Discord server.
 Categorize incoming user messages strictly into one of the following rule violation keys:
 
@@ -751,7 +777,7 @@ OPTIONS:
 - discord_advertising (Posting invite links to other Discord servers)
 - light_advertising (Mentioning/telling other Minecraft server names)
 - asking_staff_items (Begging or asking staff for free items/ranks)
-- chat_trolling (Trolling users, e.g. "press alt + f4 for free rank")
+- chat_trolling (Trolling users, e.g. "press alt + f4 for free rank", or non-staff users falsely claiming to be staff)
 - flooding_chat (Spamming or sending repeated flooding messages)
 - inappropriate_behavior (NSFW, sexually explicit, or inappropriate conduct)
 - discrimination (Racism, homophobia, bigotry, or discrimination)
@@ -773,15 +799,21 @@ OPTIONS:
 - harassment (Harassment, bullying, or persistent targeted toxicity)
 - none (Message is clean, casual banter, or adheres to rules)
 
-CONTEXT-AWARE EVALUATION GUIDELINES:
-1. Distinguish harmless context vs toxic insults:
+CONTEXT-AWARE & ROLE-AWARE EVALUATION GUIDELINES:
+${staffContext}
+1. Role-Aware Immunity & Legitimate Claims:
+   - When an Admin/Mod/Staff member says "im a admin", "i am staff", "stop spamming or ill mute you", this is 100% legitimate staff duty. NEVER flag this under chat_trolling, harassment, or general_rudeness.
+   - Genuine staff members discussing rules, warnings, or their duties must NOT be flagged for mentioning staff ranks.
+2. Distinguish harmless context vs toxic insults:
    - Clean / Friendly: "bro has luck on his side thats why he won", "gg that was lucky", "what the duck", "i suck at this game" -> rule_violation: "none"
    - Toxic / Rude: "bro is a lucker and he sucks", "you're trash and you suck", "lucker noob get a life" -> rule_violation: "general_rudeness" or "swearing_at_players", flagged: true, confidence: "high"
-2. Do NOT flag:
+3. Do NOT flag:
+   - Verified staff members stating their authority or giving staff instructions
    - Mild self-deprecation (e.g. "i suck at pvp")
    - Friendly game discussion about luck, RNG, or mechanics
    - Abbreviations like "mc" (Minecraft) or "bc" (because) when used innocently
-3. Flag:
+4. Flag:
+   - Non-staff members pretending to be staff to scam/trick users (chat_trolling)
    - Calling someone a "lucker" in a derogatory/insulting way combined with insults ("he sucks", "you suck")
    - Targeted toxicity, hostility, and offensive slurs
 
@@ -1589,7 +1621,7 @@ async function handleMessage(payload, env) {
   }
 
   // 4. Layer 2 Check (Gemini / Gemma AI Rule Engine)
-  const l2 = await layer2AICheck(content, env);
+  const l2 = await layer2AICheck(content, env, roleIds);
   if (l2.flagged && l2.rule_violation !== 'none' && (l2.confidence === 'high' || l2.confidence === 'medium')) {
     if (isLinkExempt && (l2.rule_violation === 'discord_advertising' || l2.rule_violation === 'discord_server_links')) return;
 
