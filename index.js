@@ -1057,9 +1057,9 @@ function buildRolePickerComponents() {
 async function handleMemberJoin(userId, username, env) {
   const welcomeEmbed = {
     title: '🙏 Welcome to AstralyxPvP!',
-    description: `Namaste <@${userId}>! Welcome to **AstralyxPvP** — India's premier Minecraft Java PvP server!\n\n⚔️ **Server IP:** \`java.astralyxpvp.int.yt\`\n🌐 **Website:** [astralyxpvp.pages.dev](https://astralyxpvp.pages.dev)\n\nHead over to <#1477033060078850264> to get started and check <#1477033071076442165> for the rules!\n\nSee you on the battlefield! 🔥`,
+    description: `Namaste <@${userId}>! Welcome to **AstralyxPvP** — India's premier Minecraft Java PvP server!\n\n⚔️ **Server IP:** \`play.astralyxpvp.org\`\n🌐 **Website:** [astralyxpvp.org](https://astralyxpvp.org)\n\nHead over to <#1477033060078850264> to get started and check <#1477033071076442165> for the rules!\n\nSee you on the battlefield! 🔥`,
     color: 0xC8102E,
-    thumbnail: { url: 'https://astralyxpvp.pages.dev/Assets/logo.png' },
+    thumbnail: { url: 'https://astralyxpvp.org/Assets/logo.png' },
     footer: { text: `Welcome, ${username}! • AstralyxPvP` },
     timestamp: new Date().toISOString()
   };

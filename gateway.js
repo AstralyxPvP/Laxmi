@@ -1,40 +1,19 @@
 /**
  * DesiBot | AstralyxPvP Assistant — Gateway
- * Render Web Service
+ * Standalone legacy gateway. The AstralyxBridge plugin replaces this service.
  */
 
 import { Client, GatewayIntentBits } from 'discord.js';
 import fetch from 'node-fetch';
-import http from 'http';
 import 'dotenv/config';
 
 const DISCORD_TOKEN  = process.env.DISCORD_TOKEN;
 const WORKER_URL     = process.env.WORKER_URL;
 const GATEWAY_SECRET = process.env.GATEWAY_SECRET;
-const RENDER_URL     = process.env.RENDER_URL;
-const PORT           = process.env.PORT || 3001;
 
 if (!DISCORD_TOKEN || !WORKER_URL || !GATEWAY_SECRET) {
   console.error('❌ Missing required env vars!');
   process.exit(1);
-}
-
-// Keep Render alive
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('DesiBot is watching 👀');
-});
-server.listen(PORT, () => console.log(`🌐 HTTP alive on port ${PORT}`));
-
-if (RENDER_URL) {
-  setInterval(async () => {
-    try {
-      await fetch(RENDER_URL);
-      console.log('📡 Self-ping sent');
-    } catch (e) {
-      console.warn('⚠️ Self-ping failed:', e.message);
-    }
-  }, 10 * 60 * 1000);
 }
 
 async function sendToWorker(payload) {
