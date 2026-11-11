@@ -411,7 +411,7 @@ async function setIgnoredChannels(channels, env) {
 
 async function getIgnoredUsers(env) {
   try {
-    const stored = await env.LAXMI_KV.get('ignored_users');
+    const stored = await env.LAXMI_KV.get('ignored_users', { cacheTtl: 0 });
     if (stored) return JSON.parse(stored);
   } catch (e) {}
   return [];
