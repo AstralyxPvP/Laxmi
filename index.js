@@ -190,14 +190,19 @@ const MSG_MEMORY_WINDOW_MS = 60000;
 // RULE & PUNISHMENT LADDER MATRIX
 // ============================================
 const RULE_OPTIONS = [
+  // 1-10
   'hacked_clients', 'swearing_at_players', 'discord_advertising', 'light_advertising',
   'asking_staff_items', 'chat_trolling', 'flooding_chat',
   'inappropriate_behavior', 'discrimination', 'referencing_tragic_events',
+  // 11-20
   'mute_evading', 'ban_evading', 'teaming_assisting', 'interrupting_1v1',
   'inappropriate_username', 'inappropriate_skins',
   'discord_server_links', 'bug_exploiting', 'threatening_others', 'advertising_social_media',
+  // 21-29
   'disease_disability_swearing', 'general_rudeness', 'doxxing',
-  'ddos_threats', 'harassment', 'none'
+  'ddos_threats', 'harassment', 'running_from_1v1', 'boundary_escaping',
+  'inappropriate_behavior_no_tolerance', 'sexual_threats',
+  'none'
 ];
 
 const PUNISHMENT_MATRIX = {
@@ -276,8 +281,8 @@ const PUNISHMENT_MATRIX = {
   ],
   inappropriate_skins: [
     { type: 'kick_warn', label: 'Warning kick + change skin request' },
-    { type: 'ban', duration: 7 * 24 * 60 * 60 * 1000, label: '7 day ban' },
     { type: 'ban', duration: 14 * 24 * 60 * 60 * 1000, label: '14 day ban' },
+    { type: 'ban', duration: 31 * 24 * 60 * 60 * 1000, label: '31 day ban' },
   ],
   discord_server_links: [
     { type: 'ban_and_mute', banDuration: 7 * 24 * 60 * 60 * 1000, muteDuration: 3 * 24 * 60 * 60 * 1000, label: '7 day ban + 3 day mute' },
@@ -315,15 +320,34 @@ const PUNISHMENT_MATRIX = {
     { type: 'ban', duration: null, label: 'Permanent ban + reported to authorities' },
   ],
   ddos_threats: [
-    { type: 'ban', duration: null, label: 'Permanent IP ban' },
-    { type: 'ban', duration: null, label: 'Permanent IP ban' },
-    { type: 'ban', duration: null, label: 'Permanent IP ban' },
+    { type: 'ban', duration: null, label: 'Permanent IP ban (no appeal)' },
+    { type: 'ban', duration: null, label: 'Permanent IP ban (no appeal)' },
+    { type: 'ban', duration: null, label: 'Permanent IP ban (no appeal)' },
   ],
   harassment: [
     { type: 'warn', label: 'Warning' },
+    { type: 'ban', duration: 31 * 24 * 60 * 60 * 1000, label: '31 day ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+  ],
+  running_from_1v1: [
+    { type: 'warn', label: 'Warning' },
     { type: 'ban', duration: 7 * 24 * 60 * 60 * 1000, label: '7 day ban' },
     { type: 'ban', duration: 31 * 24 * 60 * 60 * 1000, label: '31 day ban' },
-  ]
+  ],
+  boundary_escaping: [
+    { type: 'warn', label: 'Warning' },
+    { type: 'ban', duration: 90 * 24 * 60 * 60 * 1000, label: '90 day ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+  ],
+  inappropriate_behavior_no_tolerance: [
+    { type: 'mute', duration: 31 * 24 * 60 * 60 * 1000, label: '31 day mute' },
+    { type: 'mute', duration: null, label: 'Permanent mute' },
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+  ],
+  sexual_threats: [
+    { type: 'ban', duration: null, label: 'Permanent ban' },
+    { type: 'ban', duration: null, label: 'Permanent ban + community blacklist' },
+  ],
 };
 
 // ============================================
@@ -952,7 +976,8 @@ OPTIONS:
 - asking_staff_items (Begging or asking staff for free items/ranks)
 - chat_trolling (Trolling users, e.g. "press alt + f4 for free rank", or non-staff users falsely claiming to be staff)
 - flooding_chat (Spamming or sending repeated flooding messages)
-- inappropriate_behavior (NSFW, sexually explicit, or inappropriate conduct)
+- inappropriate_behavior (NSFW, sexually explicit, or inappropriate conduct — rule 8 standard ladder)
+- inappropriate_behavior_no_tolerance (Severe/explicit NSFW or repeated inappropriate conduct — rule 28 zero-tolerance ladder)
 - discrimination (Racism, homophobia, bigotry, or discrimination)
 - referencing_tragic_events (Referencing tragedies, disasters, or mass violence)
 - mute_evading (Admitting to or arranging mute evasions on alternate accounts)
@@ -968,8 +993,11 @@ OPTIONS:
 - disease_disability_swearing (Using diseases or disabilities as insults)
 - general_rudeness (Targeted toxicity, insulting a player's skill or person like "you're a lucker and you suck", toxic belittling, or disrespect)
 - doxxing (Sharing private personal real-life information of users)
-- ddos_threats (Threatening IP attacks, booter services, or DDoS)
-- harassment (Harassment, bullying, or persistent targeted toxicity)
+- ddos_threats (Threatening IP attacks, booter services, or DDoS — no appeal)
+- harassment (Harassment, bullying, sexual harassment, or persistent targeted toxicity — rule 25)
+- running_from_1v1 (Refusing to finish / fleeing an agreed 1v1 — rule 26)
+- boundary_escaping (Escaping the arena boundary or camping on barriers — rule 27)
+- sexual_threats (Sexual threats or sexual intimidation, even as a joke — rule 29)
 - none (Message is clean, casual banter, or adheres to rules)
 
 CONTEXT-AWARE & ROLE-AWARE EVALUATION GUIDELINES:
