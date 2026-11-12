@@ -5,6 +5,7 @@
  */
 
 import { verifyKey, InteractionType, InteractionResponseType } from 'discord-interactions';
+import { runPollGeneration, previewPoll } from './poll.js';
 import {
   DataSet,
   RegExpMatcher,
@@ -399,7 +400,7 @@ function jsonResponse(data, status = 200) {
 
 async function getIgnoredChannels(env) {
   try {
-    const stored = await env.LAXMI_KV.get('ignored_channels');
+    const stored = await env.LAXMI_KV.get('ignored_channels', { cacheTtl: 0 });
     if (stored) return JSON.parse(stored);
   } catch (e) {}
   return [...DEFAULT_IGNORED_CHANNELS];
@@ -958,7 +959,7 @@ async function purgeMessagesFromMemory(env, channelId, messageIds) {
   } catch (e) {}
 }
 
-async function layer2AICheck(text, env, authorRoles = []) {
+async function layer2AICheck(text, env, authorRoles = [], options = {}) {
   const staffRoleNames = authorRoles.map(r => STAFF_ROLE_MAP[r]).filter(Boolean);
   const isVerifiedStaff = staffRoleNames.length > 0;
   const staffContext = isVerifiedStaff
@@ -1037,6 +1038,7 @@ Return ONLY valid JSON matching the requested schema.`;
   ];
 
   for (const model of modelChain) {
+    if (options.provider === 'groq') break;
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`, {
         method: 'POST',
@@ -1074,6 +1076,58 @@ Return ONLY valid JSON matching the requested schema.`;
       if (jsonMatch) cleaned = jsonMatch[0];
 
       return JSON.parse(cleaned);
+    } catch (e) {
+      continue;
+    }
+  }
+
+  // Groq fallback — same schema, constrained by prompt + json_object mode
+  for (const groqModel of ['openai/gpt-oss-120b', 'openai/gpt-oss-20b']) {
+    if (options.provider === 'gemini') break;
+    try {
+      if (!env.GROQ_API_KEY) break;
+
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: groqModel,
+          messages: [
+            {
+              role: 'system',
+              content: `${systemPrompt}\n\nRespond with a JSON object only, using exactly these keys: "flagged" (boolean), "rule_violation" (one of the OPTIONS keys), "reason" (string or null), "confidence" ("high" | "medium" | "low").`,
+            },
+            { role: 'user', content: userContent },
+          ],
+          response_format: { type: 'json_object' },
+          reasoning_effort: 'low',
+          temperature: 0.0,
+          max_completion_tokens: 800,
+        }),
+      });
+
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      const raw = data.choices?.[0]?.message?.content;
+      if (!raw) continue;
+
+      let cleaned = raw.replace(/```json|```/g, '').trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (jsonMatch) cleaned = jsonMatch[0];
+
+      const verdict = JSON.parse(cleaned);
+      if (!RULE_OPTIONS.includes(verdict.rule_violation)) {
+        verdict.rule_violation = verdict.flagged ? 'inappropriate_behavior' : 'none';
+      }
+      if (!['high', 'medium', 'low'].includes(verdict.confidence)) {
+        verdict.confidence = 'low';
+      }
+      verdict.flagged = Boolean(verdict.flagged);
+      return verdict;
     } catch (e) {
       continue;
     }
@@ -1877,12 +1931,74 @@ async function handleModerate(payload, env) {
 // WORKER ENTRY
 // ============================================
 export default {
+  // Cron: 30 8 * * * → 08:30 UTC → 2:00 PM IST
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        const result = await runPollGeneration(env);
+        console.log('[qotd] scheduled run:', JSON.stringify(result));
+      } catch (err) {
+        console.error('[qotd] scheduled run failed:', err.message);
+      }
+    })());
+  },
+
   async fetch(request, env, ctx) {
     if (request.method === 'GET') {
       return new Response('DesiBot | AstralyxPvP Assistant is online 🙏', { headers: { 'Content-Type': 'text/plain' } });
     }
 
     const authHeader = request.headers.get('authorization');
+
+    // Manual QOTD test trigger. Requires the gateway secret; ?force=1 ignores the daily guard.
+    if (new URL(request.url).pathname === '/poll/test') {
+      if (!env.GATEWAY_SECRET || authHeader !== `Bearer ${env.GATEWAY_SECRET}`) {
+        return jsonResponse({ error: 'Unauthorized' }, 401);
+      }
+      const force = new URL(request.url).searchParams.get('force') === '1';
+      try {
+        const result = await runPollGeneration(env, { force });
+        return jsonResponse({ ok: true, result });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Generate-only preview — never posts to Discord. Useful for checking the AI.
+    if (new URL(request.url).pathname === '/poll/preview') {
+      if (!env.GATEWAY_SECRET || authHeader !== `Bearer ${env.GATEWAY_SECRET}`) {
+        return jsonResponse({ error: 'Unauthorized' }, 401);
+      }
+      try {
+        const provider = new URL(request.url).searchParams.get('provider') || undefined;
+        const poll = await previewPoll(env, provider);
+        return jsonResponse({ ok: true, poll });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Moderation preview — runs the AI classifier without punishing anyone.
+    if (new URL(request.url).pathname === '/moderation/test') {
+      if (!env.GATEWAY_SECRET || authHeader !== `Bearer ${env.GATEWAY_SECRET}`) {
+        return jsonResponse({ error: 'Unauthorized' }, 401);
+      }
+      const url = new URL(request.url);
+      let text = url.searchParams.get('text');
+      if (!text && request.headers.get('content-type')?.includes('application/json')) {
+        const body = await request.json().catch(() => ({}));
+        text = body.text;
+      }
+      if (!text) return jsonResponse({ error: 'text required' }, 400);
+
+      const provider = url.searchParams.get('provider') || undefined;
+      try {
+        const verdict = await layer2AICheck(text, env, [], { provider });
+        return jsonResponse({ ok: true, text, provider: provider || 'gemini-first', verdict });
+      } catch (err) {
+        return jsonResponse({ ok: false, error: err.message }, 500);
+      }
+    }
 
     // Discord Interactions
     if (request.headers.get('x-signature-ed25519')) {
