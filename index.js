@@ -1979,6 +1979,7 @@ async function handleMessage(payload, env) {
   const l2 = await layer2AICheck(content, env, roleIds);
   if (l2.flagged && l2.rule_violation !== 'none' && l2.confidence === 'high') {
     if (isLinkExempt && (l2.rule_violation === 'discord_advertising' || l2.rule_violation === 'discord_server_links')) return;
+    if ((l2.rule_violation === 'discord_advertising' || l2.rule_violation === 'discord_server_links') && await isAllowedInviteLink(content, env)) return;
 
     await deleteMessage(channelId, messageId, env);
 
@@ -2030,6 +2031,15 @@ async function handleModerate(payload, env) {
 
   const l2 = await layer2AICheck(content, env);
   if (l2.flagged && l2.rule_violation !== 'none') {
+    if ((l2.rule_violation === 'discord_advertising' || l2.rule_violation === 'discord_server_links') && await isAllowedInviteLink(content, env)) {
+      return jsonResponse({
+        verdict: 'ok',
+        rule: 'none',
+        reason: 'Allowed AstralyxPvP invite',
+        confidence: 'high',
+        layer: 'layer2'
+      });
+    }
     return jsonResponse({
       verdict: l2.confidence === 'high' ? 'block' : 'flag',
       rule: l2.rule_violation,
