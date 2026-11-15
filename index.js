@@ -1046,6 +1046,53 @@ function adjustAdvertisingVerdict(verdict, text) {
   return verdict;
 }
 
+// A message can contain profanity without it being aimed at another player.
+// Require a clear target before accepting an AI swearing_at_players verdict.
+const TARGETED_PATTERN = /(?:<@[!&]?\d+>|@(?:everyone|here)\b|\b(?:you|your|you're|youre|u|ur|tum|tu|tera|teri|tumhara|tumhari|aap|ap|he|she|they|him|her|them|everyone|everybody)\b)/i;
+
+const GAME_CONTEXT_PATTERN = /\b(?:pvp|1v1|1 v 1|minecraft|mc|arena|duel|fight|match|server|game|ingame|in-game|bedwars|skywars|kitpvp|lifesteal|smp|practice|combat|bow|sword|hit|killstreak|respawn|spawn|map|lobby|queue)\b/i;
+const REAL_LIFE_HARM_PATTERN = /\b(?:real life|irl|in real|for real|outside|after school|address|home|house|stab|shoot|gun|knife|bomb|police|hospital|beat you up|find you|track you|swat|rape|acid|murder|kill your family|kill you for real|hurt you for real)\b/i;
+
+function adjustPlayerSwearingVerdict(verdict, text) {
+  if (!verdict?.flagged || verdict.rule_violation !== 'swearing_at_players') return verdict;
+  if (TARGETED_PATTERN.test(text)) return verdict;
+
+  return {
+    ...verdict,
+    flagged: false,
+    rule_violation: 'none',
+    reason: 'General expression, not targeted at a player',
+  };
+}
+
+function adjustThreatVerdict(verdict, text) {
+  if (!verdict?.flagged || verdict.rule_violation !== 'threatening_others') return verdict;
+
+  // Real-life harm language always wins over game-context words.
+  if (REAL_LIFE_HARM_PATTERN.test(text)) return verdict;
+
+  if (GAME_CONTEXT_PATTERN.test(text)) {
+    return {
+      ...verdict,
+      flagged: false,
+      rule_violation: 'none',
+      reason: 'In-game PvP threat, not real-life violence',
+    };
+  }
+
+  return verdict;
+}
+
+function adjustAIVerdict(verdict, text) {
+  return adjustThreatVerdict(
+    adjustPlayerSwearingVerdict(
+      adjustAdvertisingVerdict(verdict, text),
+      text
+    ),
+    text
+  );
+}
+
 async function layer2AICheck(text, env, authorRoles = [], options = {}) {
   const staffRoleNames = authorRoles.map(r => STAFF_ROLE_MAP[r]).filter(Boolean);
   const isVerifiedStaff = staffRoleNames.length > 0;
@@ -1058,7 +1105,7 @@ Categorize incoming user messages strictly into one of the following rule violat
 
 OPTIONS:
 - hacked_clients (Admitting to or promoting hacked clients, cheats, or unfair advantages)
-- swearing_at_players (Swearing at, cursing at, or verbally abusing other players)
+- swearing_at_players (Swearing at, cursing at, or verbally abusing another player — must be clearly directed at a user or group; general vulgar jokes and interjections are NOT this rule)
 - discord_advertising (Posting invite links to other Discord servers)
 - light_advertising (Promoting, inviting users to, or soliciting business for another Minecraft server/service — NOT merely mentioning or asking about a hosting provider)
 - asking_staff_items (Begging or asking staff for free items/ranks)
@@ -1076,7 +1123,7 @@ OPTIONS:
 - inappropriate_skins (Inappropriate or offensive skins or avatars)
 - discord_server_links (Posting non-Astralyx Discord links; AstralyxPvP's own invite discord.gg/u8BFrpRwEg is ALLOWED)
 - bug_exploiting (Exploiting server bugs, glitches, or abusing exploits)
-- threatening_others (Threats of real-life harm or physical violence)
+- threatening_others (Threats of real-life harm or physical violence — NOT in-game PvP kills, Minecraft fights, or game banter)
 - advertising_social_media (Promoting personal YouTube, Twitch, TikTok, etc. — NOT asking a question about a service)
 - disease_disability_swearing (Using diseases or disabilities as insults)
 - general_rudeness (Targeted toxicity, insulting a player's skill or person like "you're a lucker and you suck", toxic belittling, or disrespect)
@@ -1101,14 +1148,24 @@ ${staffContext}
    - Mild self-deprecation (e.g. "i suck at pvp")
    - Friendly game discussion about luck, RNG, or mechanics
    - Abbreviations like "mc" (Minecraft) or "bc" (because) when used innocently
+   - In-game PvP banter such as "i will kill zoo95 if he annoys me again in pvp"
+   - General interjections/euphemisms such as "lick my aah internet", "aah", "ahh", "heck", or "dang"
 4. Flag:
    - Non-staff members pretending to be staff to scam/trick users (chat_trolling)
    - Calling someone a "lucker" in a derogatory/insulting way combined with insults ("he sucks", "you suck")
-   - Targeted toxicity, hostility, and offensive slurs
+   - Targeted toxicity, hostility, and offensive slurs (except in-game PvP banter described in guideline 6)
 5. Hosting/service questions are NOT advertising:
    - "Is this server Aternos?", "Do you use Paper or Spigot?", "Is this hosted on Aternos?", "What host do you use?" -> rule_violation: "none"
    - Mentioning a hosting provider (Aternos, Minehut, Shockbyte, PebbleHost, etc.) or server software (Paper, Spigot, Purpur, Fabric, Forge) is NOT advertising unless the author is promoting it, inviting others to join, or soliciting business.
    - A question mark or question phrasing by itself must never be treated as advertising.
+6. In-game PvP threats are NOT real-life threats:
+   - "i will kill zoo95 if he annoys me again in pvp", "I'll kill you in the next 1v1", "I will destroy you in the arena" -> rule_violation: "none"
+   - Only flag threatening_others when there is clear real-life harm language: "I will kill you in real life", "I know where you live", "I will stab you", "I'll beat you up after school".
+   - Words like "kill", "destroy", or "beat" in a Minecraft/PvP/1v1 context are game talk, not real-world violence.
+7. General vulgar expressions are NOT swearing_at_players:
+   - swearing_at_players requires a clear target: "you", "u", "your", "tum", "tu", a mention, or a specific player.
+   - Do not infer profanity from harmless interjections, censored euphemisms, or typos.
+   - If the message is not aimed at another user/group, prefer rule_violation: "none" unless it is explicit NSFW/inappropriate_behavior.
 
 Return ONLY valid JSON matching the requested schema.`;
 
@@ -1174,7 +1231,7 @@ Return ONLY valid JSON matching the requested schema.`;
       if (!['high', 'medium', 'low'].includes(verdict.confidence)) {
         verdict.confidence = 'low';
       }
-      return adjustAdvertisingVerdict(verdict, text);
+      return adjustAIVerdict(verdict, text);
     } catch (e) {
       continue;
     }
@@ -1226,7 +1283,7 @@ Return ONLY valid JSON matching the requested schema.`;
       if (!['high', 'medium', 'low'].includes(verdict.confidence)) {
         verdict.confidence = 'low';
       }
-      return adjustAdvertisingVerdict(verdict, text);
+      return adjustAIVerdict(verdict, text);
     } catch (e) {
       continue;
     }
