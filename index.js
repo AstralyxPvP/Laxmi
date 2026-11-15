@@ -116,6 +116,7 @@ const customObscenityDataset = new DataSet().addAll(englishDataset);
 const WHITELISTED_FALSE_POSITIVES = [
   'duck', 'ducks', 'ducking', 'grass', 'pass', 'bass', 'glass', 'class', 'mass', 'brass',
   'butter', 'shitzu', 'snicker', 'snickers', 'cocktail', 'peacock', 'tit', 'penistone',
+  'grape', 'grapes', 'grapefruit', 'grapefruits',
   'dickens', 'scunthorpe', 'hell', 'hello', 'shell', 'sheet', 'ship', 'shot', 'beach', 'bitchin',
   // Common innocent words that contain profanity substrings.
   'cockpit', 'cockpits', 'cockerel', 'cockerels', 'shuttlecock', 'shuttlecocks',
@@ -176,6 +177,13 @@ const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.
 
 // AstralyxPvP's own invite links — allowed under rule 17 (only OTHER server links are punishable)
 const ASTRALYX_INVITE_CODES = ['u8bfrprweg'];
+
+// Common celebratory/acknowledgement messages that should never trigger raid detection.
+const RAID_SAFE_PHRASES = new Set([
+  'gg', 'ggwp', 'wp', 'gl', 'gf', 'hf', 'lol', 'lmao', 'rofl', 'ez',
+  'hi', 'hello', 'hey', 'nice', 'ok', 'okay', 'thanks', 'thank you', 'ty',
+  'welcome', 'np', 'congrats', 'congratulations', 'good game', 'well played',
+]);
 
 // In-memory trackers
 const recentMessages = new Map();
@@ -400,7 +408,7 @@ function jsonResponse(data, status = 200) {
 
 async function getIgnoredChannels(env) {
   try {
-    const stored = await env.LAXMI_KV.get('ignored_channels', { cacheTtl: 0 });
+    const stored = await env.LAXMI_KV.get('ignored_channels');
     if (stored) return JSON.parse(stored);
   } catch (e) {}
   return [...DEFAULT_IGNORED_CHANNELS];
@@ -412,7 +420,7 @@ async function setIgnoredChannels(channels, env) {
 
 async function getIgnoredUsers(env) {
   try {
-    const stored = await env.LAXMI_KV.get('ignored_users', { cacheTtl: 0 });
+    const stored = await env.LAXMI_KV.get('ignored_users');
     if (stored) return JSON.parse(stored);
   } catch (e) {}
   return [];
@@ -684,12 +692,12 @@ function layer1Check(text) {
   // 2. Hinglish banned word check with boundary awareness to prevent false-positives
   // like 'brandi' matching 'randi'
   const cleanWithSpaces = ` ${text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')} `;
-  const compactText = text.toLowerCase().replace(/[^a-z0-9]/g, '');
 
   for (const word of HINGLISH_BANNED) {
     if (word.includes(' ')) {
-      const compactWord = word.replace(/\s+/g, '');
-      if (cleanWithSpaces.includes(` ${word} `) || compactText.includes(compactWord)) {
+      const parts = word.split(/\s+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const phrasePattern = new RegExp(`\\b${parts.join('[\\s\\-_]+')}\\b`, 'i');
+      if (phrasePattern.test(text)) {
         return { flagged: true, rule: 'swearing_at_players', reason: `Banned word detected: "${word}"`, confidence: 'high' };
       }
     } else {
@@ -712,9 +720,12 @@ function layer1Check(text) {
 }
 
 function raidCheck(channelId, content, userId) {
+  const normalizedContent = String(content || '').trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  if (RAID_SAFE_PHRASES.has(normalizedContent)) return { flagged: false };
+
   const now = Date.now();
   const window = 10000;
-  const threshold = 4;
+  const threshold = 5;
   if (!recentMessages.has(channelId)) recentMessages.set(channelId, []);
   const msgs = recentMessages.get(channelId).filter(m => now - m.timestamp < window && m.content === content);
   msgs.push({ content, userId, timestamp: now });
@@ -725,19 +736,20 @@ function raidCheck(channelId, content, userId) {
   return { flagged: false };
 }
 
-function checkRapidSpam(userId) {
+function checkRapidSpam(userId, channelId) {
   const now = Date.now();
-  const windowMs = 7000;
-  if (!userSpamTracker.has(userId)) {
-    userSpamTracker.set(userId, []);
+  const windowMs = 5000;
+  const key = `${channelId}:${userId}`;
+  if (!userSpamTracker.has(key)) {
+    userSpamTracker.set(key, []);
   }
 
-  const timestamps = userSpamTracker.get(userId).filter(t => now - t < windowMs);
+  const timestamps = userSpamTracker.get(key).filter(t => now - t < windowMs);
   timestamps.push(now);
-  userSpamTracker.set(userId, timestamps);
+  userSpamTracker.set(key, timestamps);
 
-  if (timestamps.length >= 4) {
-    userSpamTracker.set(userId, []);
+  if (timestamps.length >= 6) {
+    userSpamTracker.set(key, []);
     return true;
   }
   return false;
@@ -959,6 +971,13 @@ async function purgeMessagesFromMemory(env, channelId, messageIds) {
   } catch (e) {}
 }
 
+function coerceBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.trim().toLowerCase() === 'true';
+  if (typeof value === 'number') return value === 1;
+  return false;
+}
+
 async function layer2AICheck(text, env, authorRoles = [], options = {}) {
   const staffRoleNames = authorRoles.map(r => STAFF_ROLE_MAP[r]).filter(Boolean);
   const isVerifiedStaff = staffRoleNames.length > 0;
@@ -1075,7 +1094,15 @@ Return ONLY valid JSON matching the requested schema.`;
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
       if (jsonMatch) cleaned = jsonMatch[0];
 
-      return JSON.parse(cleaned);
+      const verdict = JSON.parse(cleaned);
+      verdict.flagged = coerceBoolean(verdict.flagged);
+      if (!RULE_OPTIONS.includes(verdict.rule_violation)) {
+        verdict.rule_violation = verdict.flagged ? 'inappropriate_behavior' : 'none';
+      }
+      if (!['high', 'medium', 'low'].includes(verdict.confidence)) {
+        verdict.confidence = 'low';
+      }
+      return verdict;
     } catch (e) {
       continue;
     }
@@ -1120,13 +1147,13 @@ Return ONLY valid JSON matching the requested schema.`;
       if (jsonMatch) cleaned = jsonMatch[0];
 
       const verdict = JSON.parse(cleaned);
+      verdict.flagged = coerceBoolean(verdict.flagged);
       if (!RULE_OPTIONS.includes(verdict.rule_violation)) {
         verdict.rule_violation = verdict.flagged ? 'inappropriate_behavior' : 'none';
       }
       if (!['high', 'medium', 'low'].includes(verdict.confidence)) {
         verdict.confidence = 'low';
       }
-      verdict.flagged = Boolean(verdict.flagged);
       return verdict;
     } catch (e) {
       continue;
@@ -1834,10 +1861,10 @@ async function handleMessage(payload, env) {
   const isLinkExempt = roleIds.some(r => LINK_EXEMPT_ROLES.includes(r));
 
   // 1. Anti-Spam Check
-  if (checkRapidSpam(userId)) {
+  if (checkRapidSpam(userId, channelId)) {
     await deleteMessage(channelId, messageId, env);
-    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, 'flooding_chat', 'Flooding chat (4 consecutive messages)', env, roleIds);
-    await sendLog(env, { userId, username, channelId, action: actionLabel, rule: 'flooding_chat', reason: 'Flooding chat (4 consecutive messages)', layer: 'Anti-Spam Filter', confidence: 'high', message: content });
+    const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, 'flooding_chat', 'Flooding chat (6 messages in 5 seconds)', env, roleIds);
+    await sendLog(env, { userId, username, channelId, action: actionLabel, rule: 'flooding_chat', reason: 'Flooding chat (6 messages in 5 seconds)', layer: 'Anti-Spam Filter', confidence: 'high', message: content });
     await alertStaff(guildId, 'flood', { title: 'Spam Flood Detected', description: 'A user is flooding the chat at high speed.', channelId, userId, username, message: content }, env);
     return;
   }
@@ -1877,13 +1904,25 @@ async function handleMessage(payload, env) {
 
   // 4. Layer 2 Check (Gemini / Gemma AI Rule Engine)
   const l2 = await layer2AICheck(content, env, roleIds);
-  if (l2.flagged && l2.rule_violation !== 'none' && (l2.confidence === 'high' || l2.confidence === 'medium')) {
+  if (l2.flagged && l2.rule_violation !== 'none' && l2.confidence === 'high') {
     if (isLinkExempt && (l2.rule_violation === 'discord_advertising' || l2.rule_violation === 'discord_server_links')) return;
 
     await deleteMessage(channelId, messageId, env);
 
     const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, l2.rule_violation, l2.reason, env, roleIds);
     await sendLog(env, { userId, username, channelId, action: actionLabel, rule: l2.rule_violation, reason: l2.reason, layer: 'Layer 2 (AI)', confidence: l2.confidence, message: content });
+  } else if (l2.flagged && l2.rule_violation !== 'none' && l2.confidence === 'medium') {
+    await sendLog(env, {
+      userId,
+      username,
+      channelId,
+      action: 'Flagged for review (medium confidence — no punishment)',
+      rule: l2.rule_violation,
+      reason: l2.reason,
+      layer: 'Layer 2 (AI)',
+      confidence: l2.confidence,
+      message: content
+    });
   }
 }
 
