@@ -173,7 +173,7 @@ const SPLIT_TARGETS = [
 const SPLIT_TARGET_LIST = [...new Set(SPLIT_TARGETS)];
 const SPLIT_TARGET_REGEX = new RegExp(`(?:${SPLIT_TARGET_LIST.join('|')})`, 'i');
 
-const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9]+|dsc\.gg\/[a-zA-Z0-9]+|discordapp\.com\/invite\/[a-zA-Z0-9]+/i;
+const AD_PATTERN = /discord\.gg\/[a-zA-Z0-9-]+|dsc\.gg\/[a-zA-Z0-9-]+|discord(?:app)?\.com\/invite\/[a-zA-Z0-9-]+/i;
 
 // AstralyxPvP's own invite links — allowed under rule 17 (only OTHER server links are punishable)
 const ASTRALYX_INVITE_CODES = ['u8bfrprweg'];
@@ -221,14 +221,14 @@ const PUNISHMENT_MATRIX = {
     { type: 'ban', duration: null, label: 'Permanent ban' },
   ],
   flooding_chat: [
+    { type: 'warn', label: 'Warning' },
     { type: 'mute', duration: 30 * 60 * 1000, label: '30 minute mute' },
     { type: 'mute', duration: 60 * 60 * 1000, label: '1 hour mute' },
-    { type: 'mute', duration: 6 * 60 * 60 * 1000, label: '6 hour mute' },
   ],
   swearing_at_players: [
+    { type: 'warn', label: 'Warning' },
     { type: 'mute', duration: 30 * 60 * 1000, label: '30 minute mute' },
     { type: 'mute', duration: 3 * 60 * 60 * 1000, label: '3 hour mute' },
-    { type: 'mute', duration: 24 * 60 * 60 * 1000, label: '1 day mute' },
   ],
   discord_advertising: [
     { type: 'mute', duration: 180 * 24 * 60 * 60 * 1000, label: '6 month mute' },
@@ -452,6 +452,39 @@ async function discordApi(url, options, env) {
     throw new Error(`Discord API ${res.status}: ${err.message || JSON.stringify(err)}`);
   }
   return res;
+}
+
+function extractInviteCodes(text) {
+  const matches = String(text || '').matchAll(/(?:discord\.gg|dsc\.gg|discord(?:app)?\.com\/invite)\/([a-zA-Z0-9-]+)/gi);
+  return [...matches].map(match => match[1]);
+}
+
+async function isInviteForMainGuild(code, env) {
+  try {
+    const res = await fetch(`https://discord.com/api/v10/invites/${encodeURIComponent(code)}`, {
+      headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}` }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.guild?.id === MAIN_GUILD_ID;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function isAllowedInviteLink(text, env) {
+  const codes = extractInviteCodes(text);
+  if (codes.length === 0) return false;
+
+  for (const code of codes) {
+    if (ASTRALYX_INVITE_CODES.includes(code.toLowerCase())) continue;
+    const resolved = await isInviteForMainGuild(code, env);
+    // Fail open if Discord cannot resolve the invite: allowing an unknown link is
+    // safer than falsely banning someone for a legitimate AstralyxPvP invite.
+    if (resolved === false) return false;
+  }
+
+  return true;
 }
 
 // Custom Native Warning
@@ -708,9 +741,9 @@ function layer1Check(text) {
   }
 
   // 3. Discord invite links
-  const inviteMatch = text.match(AD_PATTERN);
-  if (inviteMatch) {
-    const code = (inviteMatch[0].split('/').pop() || '').toLowerCase();
+  const inviteMatches = text.match(new RegExp(AD_PATTERN.source, 'gi')) || [];
+  for (const inviteMatch of inviteMatches) {
+    const code = (inviteMatch.split('/').pop() || '').toLowerCase();
     if (!ASTRALYX_INVITE_CODES.includes(code)) {
       return { flagged: true, rule: 'discord_server_links', reason: 'Non-AstralyxPvP Discord server link detected', confidence: 'high' };
     }
@@ -978,6 +1011,41 @@ function coerceBoolean(value) {
   return false;
 }
 
+const ADVERTISING_RULES = new Set([
+  'light_advertising',
+  'advertising_social_media',
+  'discord_advertising',
+  'discord_server_links',
+]);
+
+const SERVICE_MENTION_PATTERN = /\b(aternos|minehut|shockbyte|pebblehost|bisecthosting|scalacube|ploudos|falixnodes|pterodactyl|paper|spigot|purpur|fabric|forge|vanilla|bedrock|realms)\b/i;
+const PROMOTIONAL_PATTERN = /\b(join|check out|visit|subscribe|follow|use my|my discord|my youtube|my twitch|my hosting|advertise|promo|server ip|ip address)\b/i;
+
+function looksLikeQuestion(text) {
+  const trimmed = String(text || '').trim();
+  return trimmed.endsWith('?')
+    || /^(is|are|do|does|did|can|could|would|will|should|may|might|what|why|who|where|when|how)\b/i.test(trimmed);
+}
+
+function adjustAdvertisingVerdict(verdict, text) {
+  if (!verdict?.flagged) return verdict;
+  if (!ADVERTISING_RULES.has(verdict.rule_violation)) return verdict;
+
+  const hasPromotion = PROMOTIONAL_PATTERN.test(text) || /https?:\/\//i.test(text);
+  if (hasPromotion) return verdict;
+
+  if (looksLikeQuestion(text) || SERVICE_MENTION_PATTERN.test(text)) {
+    return {
+      ...verdict,
+      flagged: false,
+      rule_violation: 'none',
+      reason: 'Informational/question about a service, not advertising',
+    };
+  }
+
+  return verdict;
+}
+
 async function layer2AICheck(text, env, authorRoles = [], options = {}) {
   const staffRoleNames = authorRoles.map(r => STAFF_ROLE_MAP[r]).filter(Boolean);
   const isVerifiedStaff = staffRoleNames.length > 0;
@@ -992,7 +1060,7 @@ OPTIONS:
 - hacked_clients (Admitting to or promoting hacked clients, cheats, or unfair advantages)
 - swearing_at_players (Swearing at, cursing at, or verbally abusing other players)
 - discord_advertising (Posting invite links to other Discord servers)
-- light_advertising (Mentioning/telling other Minecraft server names)
+- light_advertising (Promoting, inviting users to, or soliciting business for another Minecraft server/service — NOT merely mentioning or asking about a hosting provider)
 - asking_staff_items (Begging or asking staff for free items/ranks)
 - chat_trolling (Trolling users, e.g. "press alt + f4 for free rank", or non-staff users falsely claiming to be staff)
 - flooding_chat (Spamming or sending repeated flooding messages)
@@ -1009,7 +1077,7 @@ OPTIONS:
 - discord_server_links (Posting non-Astralyx Discord links; AstralyxPvP's own invite discord.gg/u8BFrpRwEg is ALLOWED)
 - bug_exploiting (Exploiting server bugs, glitches, or abusing exploits)
 - threatening_others (Threats of real-life harm or physical violence)
-- advertising_social_media (Advertising personal YouTube, Twitch, TikTok, etc.)
+- advertising_social_media (Promoting personal YouTube, Twitch, TikTok, etc. — NOT asking a question about a service)
 - disease_disability_swearing (Using diseases or disabilities as insults)
 - general_rudeness (Targeted toxicity, insulting a player's skill or person like "you're a lucker and you suck", toxic belittling, or disrespect)
 - doxxing (Sharing private personal real-life information of users)
@@ -1037,6 +1105,10 @@ ${staffContext}
    - Non-staff members pretending to be staff to scam/trick users (chat_trolling)
    - Calling someone a "lucker" in a derogatory/insulting way combined with insults ("he sucks", "you suck")
    - Targeted toxicity, hostility, and offensive slurs
+5. Hosting/service questions are NOT advertising:
+   - "Is this server Aternos?", "Do you use Paper or Spigot?", "Is this hosted on Aternos?", "What host do you use?" -> rule_violation: "none"
+   - Mentioning a hosting provider (Aternos, Minehut, Shockbyte, PebbleHost, etc.) or server software (Paper, Spigot, Purpur, Fabric, Forge) is NOT advertising unless the author is promoting it, inviting others to join, or soliciting business.
+   - A question mark or question phrasing by itself must never be treated as advertising.
 
 Return ONLY valid JSON matching the requested schema.`;
 
@@ -1102,7 +1174,7 @@ Return ONLY valid JSON matching the requested schema.`;
       if (!['high', 'medium', 'low'].includes(verdict.confidence)) {
         verdict.confidence = 'low';
       }
-      return verdict;
+      return adjustAdvertisingVerdict(verdict, text);
     } catch (e) {
       continue;
     }
@@ -1154,7 +1226,7 @@ Return ONLY valid JSON matching the requested schema.`;
       if (!['high', 'medium', 'low'].includes(verdict.confidence)) {
         verdict.confidence = 'low';
       }
-      return verdict;
+      return adjustAdvertisingVerdict(verdict, text);
     } catch (e) {
       continue;
     }
@@ -1885,6 +1957,7 @@ async function handleMessage(payload, env) {
   const l1 = layer1Check(content);
   if (l1.flagged) {
     if (isLinkExempt && (l1.rule === 'discord_advertising' || l1.rule === 'discord_server_links')) return;
+    if (l1.rule === 'discord_server_links' && await isAllowedInviteLink(content, env)) return;
     await deleteMessage(channelId, messageId, env);
 
     const { actionLabel } = await applyPunishment(guildId, channelId, userId, username, l1.rule, l1.reason, env, roleIds);
@@ -1937,6 +2010,15 @@ async function handleModerate(payload, env) {
 
   const l1 = layer1Check(content);
   if (l1.flagged) {
+    if (l1.rule === 'discord_server_links' && await isAllowedInviteLink(content, env)) {
+      return jsonResponse({
+        verdict: 'ok',
+        rule: 'none',
+        reason: 'Allowed AstralyxPvP invite',
+        confidence: 'high',
+        layer: 'layer1'
+      });
+    }
     return jsonResponse({
       verdict: 'block',
       rule: l1.rule,
