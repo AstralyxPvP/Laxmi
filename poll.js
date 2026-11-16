@@ -125,7 +125,7 @@ function normalizeQuestion(text) {
   return String(text || '')
     .toLowerCase()
     .replace(/^qotd\s*#\s*\d+\s*:?\s*/i, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -174,7 +174,9 @@ function mergePollHistory(...lists) {
       if (!existing || String(entry.date || '') > String(existing.date || '')) {
         byQuestion.set(key, {
           question: String(entry.question).trim(),
-          answers: Array.isArray(entry.answers) ? entry.answers.slice(0, 10) : [],
+          answers: Array.isArray(entry.answers)
+            ? entry.answers.filter(answer => typeof answer === 'string').slice(0, 10)
+            : [],
           date: entry.date || null,
           pollNumber: entry.pollNumber || existing?.pollNumber || null,
           source: entry.source || existing?.source || null,
@@ -245,6 +247,9 @@ async function getRecentPollHistory(env, { refresh = false } = {}) {
   if (fromDiscord.length > 0 && merged.length !== stored.length) {
     await savePollHistory(env, merged);
   }
+  if (merged.length === 0) {
+    console.warn('[qotd] no recent poll history available; duplicate prevention is limited');
+  }
   return merged;
 }
 
@@ -254,10 +259,18 @@ function formatRecentQuestions(history) {
   const list = history
     .slice(-RECENT_POLL_LIMIT)
     .reverse()
-    .map((entry, index) => `${index + 1}. ${entry.question}`)
+    .map((entry, index) => {
+      const options = Array.isArray(entry.answers)
+        ? entry.answers
+          .filter(answer => typeof answer === 'string' && answer.trim())
+          .slice(0, 6)
+          .join('; ')
+        : '';
+      return `${index + 1}. ${entry.question}${options ? ` (options: ${options})` : ''}`;
+    })
     .join('\n');
 
-  return `\n\nRECENT QOTD QUESTIONS (already used — do NOT repeat, rephrase, or pick the same topic/angle):\n${list}`;
+  return `\n\nRECENT QOTD QUESTIONS (already used — do NOT repeat, rephrase, or pick the same topic/answer themes):\n${list}`;
 }
 
 function sanitizeAnswers(answers) {
