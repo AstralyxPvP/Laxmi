@@ -13,6 +13,8 @@ const DISCORD_API = 'https://discord.com/api/v10';
 
 const KV_COUNTER = 'qotd:counter';
 const KV_LAST_DATE = 'qotd:last_date';
+const KV_RECENT_POLLS = 'qotd:recent';
+const RECENT_POLL_LIMIT = 30;
 
 const SERVER_CONTEXT = `AstralyxPvP is a free India-based Java 1.9+ FFA Minecraft PvP server.
 Game modes: Sword FFA, Mace PvP, Netherite Pot, Lifesteal, Crystal PvP, Sumo, and 1v1 arenas.
@@ -95,13 +97,168 @@ RULES:
 4. Keep the question under 200 characters and clearly answerable with one vote.
 5. Give 4 to 8 answers. Each answer text must be under 50 characters and feel distinct.
 6. Prefix every answer with one fitting unicode emoji.
-7. Do not repeat generic questions like "favourite colour" unless there is a PvP twist.
+7. Never repeat or closely paraphrase any recent QOTD question supplied by the user. Pick a clearly different topic and angle. Do not repeat generic questions like "favourite colour" unless there is a PvP twist.
 8. Avoid mentioning other servers, cheat clients, or anything that breaks rules.
 9. Use light desi-gamer humour when it fits, but keep it understandable for everyone.
 
 Return JSON only.`;
 
 const LEADING_EMOJI = /^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s*/u;
+
+const QUESTION_STOP_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'do', 'does', 'did', 'doing', 'have', 'has', 'had', 'having',
+  'i', 'you', 'your', 'yours', 'u', 'ur', 'we', 'our', 'ours',
+  'they', 'their', 'theirs', 'he', 'she', 'it', 'him', 'her', 'his',
+  'hers', 'its', 'them', 'me', 'my', 'mine', 'us',
+  'this', 'that', 'these', 'those', 'what', 'which', 'who', 'whom',
+  'whose', 'when', 'where', 'why', 'how', 'on', 'in', 'at', 'to',
+  'for', 'of', 'with', 'about', 'from', 'by', 'as', 'and', 'or',
+  'but', 'if', 'then', 'than', 'so', 'such', 'can', 'could', 'would',
+  'should', 'will', 'shall', 'may', 'might', 'must', 'am', 's', 't',
+  'just', 'really', 'most', 'more', 'best', 'favorite', 'favourite',
+  'like', 'prefer', 'think', 'feel', 'choose', 'pick',
+  'qotd', 'astralyxpvp', 'astralyx', 'pvp', 'minecraft', 'mc', 'server',
+]);
+
+function normalizeQuestion(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/^qotd\s*#\s*\d+\s*:?\s*/i, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function questionKeywords(text) {
+  const normalized = normalizeQuestion(text);
+  if (!normalized) return new Set();
+  return new Set(
+    normalized
+      .split(' ')
+      .filter(word => word.length > 1 && !QUESTION_STOP_WORDS.has(word)),
+  );
+}
+
+function isSameOrSimilarQuestion(a, b) {
+  const normalizedA = normalizeQuestion(a);
+  const normalizedB = normalizeQuestion(b);
+  if (!normalizedA || !normalizedB) return false;
+  if (normalizedA === normalizedB) return true;
+
+  const keywordsA = questionKeywords(a);
+  const keywordsB = questionKeywords(b);
+  if (!keywordsA.size || !keywordsB.size) return false;
+
+  let intersection = 0;
+  for (const word of keywordsA) {
+    if (keywordsB.has(word)) intersection += 1;
+  }
+  const union = new Set([...keywordsA, ...keywordsB]).size;
+  const jaccard = intersection / union;
+  const overlap = intersection / Math.min(keywordsA.size, keywordsB.size);
+  return jaccard >= 0.5 || overlap >= 0.8;
+}
+
+function mergePollHistory(...lists) {
+  const byQuestion = new Map();
+
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      if (!entry || typeof entry.question !== 'string') continue;
+      const key = normalizeQuestion(entry.question);
+      if (!key) continue;
+
+      const existing = byQuestion.get(key);
+      if (!existing || String(entry.date || '') > String(existing.date || '')) {
+        byQuestion.set(key, {
+          question: String(entry.question).trim(),
+          answers: Array.isArray(entry.answers) ? entry.answers.slice(0, 10) : [],
+          date: entry.date || null,
+          pollNumber: entry.pollNumber || existing?.pollNumber || null,
+          source: entry.source || existing?.source || null,
+        });
+      }
+    }
+  }
+
+  return [...byQuestion.values()]
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
+    .slice(-RECENT_POLL_LIMIT);
+}
+
+async function readStoredPollHistory(env) {
+  try {
+    const raw = await env.LAXMI_KV.get(KV_RECENT_POLLS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error('[qotd] history read failed:', err.message);
+    return [];
+  }
+}
+
+async function savePollHistory(env, history) {
+  try {
+    await env.LAXMI_KV.put(KV_RECENT_POLLS, JSON.stringify(history.slice(-RECENT_POLL_LIMIT)));
+  } catch (err) {
+    console.error('[qotd] history write failed:', err.message);
+  }
+}
+
+async function fetchRecentDiscordPolls(env, limit = 100) {
+  try {
+    const res = await fetch(`${DISCORD_API}/channels/${QOTD_CHANNEL_ID}/messages?limit=${limit}`, {
+      headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[qotd] history fetch HTTP ${res.status}: ${body.slice(0, 300)}`);
+      return [];
+    }
+
+    const messages = await res.json();
+    return (Array.isArray(messages) ? messages : [])
+      .filter(message => message?.poll?.question?.text)
+      .map(message => ({
+        question: message.poll.question.text,
+        answers: (message.poll.answers || [])
+          .map(answer => answer?.poll_media?.text)
+          .filter(Boolean),
+        date: message.timestamp || null,
+      }))
+      .reverse();
+  } catch (err) {
+    console.error('[qotd] history fetch failed:', err.message);
+    return [];
+  }
+}
+
+async function getRecentPollHistory(env, { refresh = false } = {}) {
+  const stored = await readStoredPollHistory(env);
+  const shouldRefresh = refresh || stored.length < Math.min(RECENT_POLL_LIMIT, 10);
+  const fromDiscord = shouldRefresh ? await fetchRecentDiscordPolls(env) : [];
+  const merged = mergePollHistory(stored, fromDiscord);
+
+  if (fromDiscord.length > 0 && merged.length !== stored.length) {
+    await savePollHistory(env, merged);
+  }
+  return merged;
+}
+
+function formatRecentQuestions(history) {
+  if (!Array.isArray(history) || history.length === 0) return '';
+
+  const list = history
+    .slice(-RECENT_POLL_LIMIT)
+    .reverse()
+    .map((entry, index) => `${index + 1}. ${entry.question}`)
+    .join('\n');
+
+  return `\n\nRECENT QOTD QUESTIONS (already used — do NOT repeat, rephrase, or pick the same topic/angle):\n${list}`;
+}
 
 function sanitizeAnswers(answers) {
   if (!Array.isArray(answers)) return [];
@@ -156,7 +313,7 @@ function parsePollJson(raw) {
 
 const GROQ_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
 
-async function generatePollWithGemini(env, userPrompt) {
+async function generatePollWithGemini(env, userPrompt, temperature = 1.0) {
   const models = [
     env.GEMINI_MODEL || 'gemini-3.5-flash-lite-preview',
     'gemini-3.1-flash-lite-preview',
@@ -174,7 +331,7 @@ async function generatePollWithGemini(env, userPrompt) {
             contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
             systemInstruction: { parts: [{ text: AI_SYSTEM_PROMPT }] },
             generationConfig: {
-              temperature: 1.0,
+              temperature: Math.min(1.4, temperature),
               maxOutputTokens: 600,
               responseMimeType: 'application/json',
               responseSchema: {
@@ -222,7 +379,7 @@ async function generatePollWithGemini(env, userPrompt) {
   return null;
 }
 
-async function generatePollWithGroq(env, userPrompt) {
+async function generatePollWithGroq(env, userPrompt, temperature = 0.9) {
   if (!env.GROQ_API_KEY) return null;
 
   for (const model of GROQ_MODELS) {
@@ -241,7 +398,7 @@ async function generatePollWithGroq(env, userPrompt) {
           ],
           response_format: { type: 'json_object' },
           reasoning_effort: 'low',
-          temperature: 0.9,
+          temperature: Math.min(1.4, temperature),
           max_completion_tokens: 1500,
         }),
       });
@@ -267,20 +424,26 @@ async function generatePollWithGroq(env, userPrompt) {
   return null;
 }
 
-async function generatePollWithAI(env, pollNumber, preferredProvider) {
+async function generatePollWithAI(env, pollNumber, preferredProvider, recentHistory = [], avoidQuestion = null, attempt = 0) {
+  const baseTemperature = preferredProvider === 'groq' ? 0.9 : 1.0;
+  const temperature = Math.min(1.4, baseTemperature + attempt * 0.15);
+  const avoidNote = avoidQuestion
+    ? `\n\nThe previous attempt "${avoidQuestion}" was too similar to an existing QOTD. Generate a completely different topic and angle. Do not reuse its key words.`
+    : '';
+
   const userPrompt = `Create QOTD#${pollNumber} for ${new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-  })}. Pick a fresh, engaging PvP/server topic that has not been asked recently.`;
+  })}. Pick a fresh, engaging PvP/server topic that has not been asked recently.${formatRecentQuestions(recentHistory)}${avoidNote}`;
 
   const providers = preferredProvider === 'groq'
     ? [generatePollWithGroq, generatePollWithGemini]
     : [generatePollWithGemini, generatePollWithGroq];
 
   for (const provider of providers) {
-    const poll = await provider(env, userPrompt);
+    const poll = await provider(env, userPrompt, temperature);
     if (poll) {
       return {
         question: poll.question,
@@ -295,9 +458,45 @@ async function generatePollWithAI(env, pollNumber, preferredProvider) {
   return null;
 }
 
-function getFallbackPoll(pollNumber) {
+async function generateUniquePoll(env, pollNumber, preferredProvider, history = []) {
+  let avoidQuestion = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const poll = await generatePollWithAI(
+      env,
+      pollNumber,
+      preferredProvider,
+      history,
+      avoidQuestion,
+      attempt,
+    );
+    if (!poll) return null;
+
+    const similar = history.find(entry => isSameOrSimilarQuestion(poll.question, entry.question));
+    if (!similar) return poll;
+
+    console.warn(
+      `[qotd] rejected similar poll (attempt ${attempt + 1}): "${poll.question}" ~ "${similar.question}"`,
+    );
+    avoidQuestion = poll.question;
+  }
+
+  return null;
+}
+
+function getFallbackPoll(pollNumber, history = []) {
   const dayIndex = Math.floor(Date.now() / 86400000);
-  const base = FALLBACK_POLLS[dayIndex % FALLBACK_POLLS.length];
+  const start = dayIndex % FALLBACK_POLLS.length;
+
+  for (let i = 0; i < FALLBACK_POLLS.length; i += 1) {
+    const base = FALLBACK_POLLS[(start + i) % FALLBACK_POLLS.length];
+    const question = `QOTD#${pollNumber}: ${base.question}`;
+    if (!history.some(entry => isSameOrSimilarQuestion(question, entry.question))) {
+      return { question, answers: base.answers, durationHours: base.durationHours };
+    }
+  }
+
+  const base = FALLBACK_POLLS[start];
   return {
     question: `QOTD#${pollNumber}: ${base.question}`,
     answers: base.answers,
@@ -393,9 +592,10 @@ async function logToChannel(env, embed) {
 export async function previewPoll(env, provider) {
   const raw = await env.LAXMI_KV.get(KV_COUNTER).catch(() => null);
   const nextNumber = (raw ? parseInt(raw, 10) || 0 : 0) + 1;
-  const generated = await generatePollWithAI(env, nextNumber, provider);
+  const history = await getRecentPollHistory(env);
+  const generated = await generateUniquePoll(env, nextNumber, provider, history);
   if (generated) return { source: generated.provider, ...generated };
-  return { source: 'fallback', ...getFallbackPoll(nextNumber) };
+  return { source: 'fallback', ...getFallbackPoll(nextNumber, history) };
 }
 
 /**
@@ -417,19 +617,29 @@ export async function runPollGeneration(env, options = {}) {
     }
   }
 
+  const history = await getRecentPollHistory(env, { refresh: true });
   const pollNumber = await getNextPollNumber(env);
-  const generated = await generatePollWithAI(env, pollNumber);
+  const generated = await generateUniquePoll(env, pollNumber, undefined, history);
   let poll = generated;
   let source = 'ai';
 
   if (!poll) {
-    poll = getFallbackPoll(pollNumber);
+    poll = getFallbackPoll(pollNumber, history);
     source = 'fallback';
   } else {
     source = `${generated.provider}:${generated.model}`;
   }
 
   const message = await postPoll(QOTD_CHANNEL_ID, poll, env);
+
+  await savePollHistory(env, mergePollHistory(history, [{
+    question: poll.question,
+    answers: poll.answers.map(answer => answer.text),
+    date: new Date().toISOString(),
+    pollNumber,
+    source,
+  }]));
+
   const roleMessage = await postRolePing(QOTD_CHANNEL_ID, env);
   const thread = await createPollThread(
     QOTD_CHANNEL_ID,
